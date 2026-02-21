@@ -1,0 +1,21 @@
+2025-12-27 20:54:18,470 | INFO | show all tasks
+2025-12-27 20:54:44,489 | INFO | end task num 4
+2025-12-27 20:54:55,898 | INFO | delte task num 4
+2025-12-27 20:55:00,274 | INFO | show all tasks
+2025-12-27 20:55:09,150 | INFO | delte task num 3
+2025-12-27 20:55:10,783 | INFO | show all tasks
+2025-12-27 20:55:28,778 | ERROR | task title is too short
+Traceback (most recent call last):
+  File "E:\T_M 2\main.py", line 22, in <module>
+    service.add_task(title, desc)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "E:\T_M 2\services\task_s.py", line 11, in add_task
+    validate_title(title)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "E:\T_M 2\utils\validators.py", line 11, in validate_title
+    raise ValidationError("task title is too short")
+utils.validators.ValidationError: task title is too short
+2025-12-27 20:55:59,002 | INFO | show all tasks
+2025-12-27 21:12:54,368 | INFO | show all tasks
+2025-12-29 23:08:25,848 | WARNING | LOGIN_FAILED | user=hussein awad | reason='AuthService' object has no attribute '_get_user'
+2025-12-30 23:18:18,008 | WARNING | LOGIN_FAILED | user=hussein awad | reason='AuthService' object has no attribute '_get_user'
