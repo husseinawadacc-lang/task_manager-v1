@@ -1,101 +1,226 @@
-from typing import List
+from typing import Tuple, List
+
 from models.task import Task
-from models.user import User
-from core.enums.user_role import UserRole
 from storage.base_st import BaseStorage
+from services.unit_of_work import UnitOfWork
+
 from utils.exceptions import (
-    PermissionDeniedError,
+    TaskNotFoundError,
+    ForbiddenTaskAccessError,
+    InvalidPaginationError,
     NotFoundError,
-    ValidationError,
 )
 
 
 class TaskService:
     """
-    Business logic layer for Tasks.
+    TaskService
 
-    Responsibilities:
-    - Enforce permissions
-    - Validate ownership
-    - Decide which storage method to call
-    - NEVER expose storage details to API
+    Responsibilities
+    ----------------
+    - Enforce business rules
+    - Enforce user isolation
+    - Validate pagination
+    - Coordinate storage operations
+    - Manage transaction via UnitOfWork
     """
 
-    def __init__(self, storage: BaseStorage):
-        self.storage = storage
+    DEFAULT_LIMIT = 20
+    MAX_LIMIT = 100
 
-    # =========================
-    # Create
-    # =========================
+    def __init__(self, storage: BaseStorage, uow: UnitOfWork):
+        self.storage = storage
+        self.uow = uow
+
+    # =====================================================
+    # CREATE TASK
+    # =====================================================
 
     def create_task(
         self,
-        owner_id: int,
+        *,
         title: str,
-        description: str | None = None,
+        description: str,
+        owner_id: int,
     ) -> Task:
-        
-        if not title or not title.strip():
-            raise ValidationError("Task title is required")
-
-        task = Task(
-            id=None,
-            owner_id=owner_id,
-            title=title.strip(),
-            description=description,
-            completed=False,
-        )
-
-        return self.storage.save_task(task)
-
-    # =========================
-    # Read
-    # =========================
-
-    def get_task(self, task_id: int, user: User) -> Task:
-        task = self.storage.get_task_by_id(task_id)
-        if not task:
-            raise NotFoundError("resource not found")#No info leak or enumeration risk by saying "not found" instead of "forbidden"
-
-        if user.role != UserRole.ADMIN and task.owner_id != user.id:
-            raise NotFoundError("resource not found")#denied to avoid info leak or enumeration
-
-        return task
-
-    def list_tasks(self, user: User) -> List[Task]:
         """
-        - Admin: see all tasks
-        - User: see only own tasks
+        Create a new task.
+
+        Steps:
+        1. Start transaction
+        2. Call storage to persist task
+        3. UnitOfWork handles commit automatically
         """
-        if user.role == UserRole.ADMIN:
-            return self.storage.list_all_tasks()
 
-        return self.storage.list_tasks_by_owner(user.id)
+        with self.uow as session:
 
-    # =========================
-    # Update
-    # =========================
-    def update_task(self, task_id: int, user: User, **kwargs) -> Task:
-              
-       task = self.get_task(task_id, user)
-       title = kwargs.get("title")
-       if title is not None:
-           if not title.strip():
-             raise ValidationError("Title cannot be empty")
-           task.title = title.strip()
+            task = self.storage.create_task(
+                session=session,
+                title=title,
+                description=description,
+                owner_id=owner_id,
+            )
 
-       if "description" in kwargs:
-          task.description = kwargs["description"]
+            return task
 
-       if "completed" in kwargs and kwargs["completed"] is not None:
-          task.completed = kwargs["completed"]
+    # =====================================================
+    # GET TASK
+    # =====================================================
 
-       return self.storage.save_task(task)
-    
-    # =========================
-    # Delete
-    # =========================
-    def delete_task(self, task_id: int, user: User) -> None:
-        self.get_task(task_id, user)
-        
-        self.storage.delete_task(task_id)
+    def get_task(
+        self,
+        *,
+        task_id: int,
+        requester_id: int,
+    ) -> Task:
+        """
+        Retrieve a task and enforce ownership.
+
+        Security rule:
+        If user is not owner → return NOT FOUND
+        to prevent resource enumeration (IDOR).
+        """
+
+        with self.uow as session:
+
+            try:
+                task = self.storage.get_task(
+                    session=session,
+                    task_id=task_id,
+                )
+
+            except NotFoundError:
+                raise TaskNotFoundError()
+
+            # Ownership enforcement
+            if task.owner_id != requester_id:
+                raise TaskNotFoundError()
+
+            return task
+
+    # =====================================================
+    # UPDATE TASK
+    # =====================================================
+
+    def update_task(
+        self,
+        *,
+        task_id: int,
+        requester_id: int,
+        title: str | None = None,
+        description: str | None = None,
+        completed: bool | None = None,
+    ) -> Task:
+        """
+        Update task fields.
+
+        Rules:
+        - Task must exist
+        - Requester must be owner
+        """
+
+        with self.uow as session:
+
+            try:
+                task = self.storage.get_task(
+                    session=session,
+                    task_id=task_id,
+                )
+
+            except NotFoundError:
+                raise TaskNotFoundError()
+
+            if task.owner_id != requester_id:
+                raise TaskNotFoundError()
+
+            updated = self.storage.update_task(
+                session=session,
+                task_id=task_id,
+                title=title,
+                description=description,
+                completed=completed,
+            )
+
+            return updated
+
+    # =====================================================
+    # DELETE TASK
+    # =====================================================
+
+    def delete_task(
+        self,
+        *,
+        task_id: int,
+        requester_id: int,
+    ) -> None:
+        """
+        Delete a task.
+
+        Only the owner may delete it.
+        """
+
+        with self.uow as session:
+
+            try:
+                task = self.storage.get_task(
+                    session=session,
+                    task_id=task_id,
+                )
+
+            except NotFoundError:
+                raise TaskNotFoundError()
+
+            if task.owner_id != requester_id:
+                raise TaskNotFoundError()
+
+            self.storage.delete_task(
+                session=session,
+                task_id=task_id,
+            )
+
+    # =====================================================
+    # LIST TASKS (PAGINATION)
+    # =====================================================
+
+    def list_tasks(
+        self,
+        *,
+        owner_id: int,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> Tuple[List[Task], int]:
+        """
+        Return paginated tasks.
+
+        Returns:
+        (items, total_count)
+        """
+
+        limit = limit if limit is not None else self.DEFAULT_LIMIT
+        offset = offset if offset is not None else 0
+
+        # Pagination validation
+        if limit < 1:
+            raise InvalidPaginationError("limit must be >= 1")
+
+        if limit > self.MAX_LIMIT:
+            raise InvalidPaginationError("limit exceeds maximum")
+
+        if offset < 0:
+            raise InvalidPaginationError("offset must be >= 0")
+
+        with self.uow as session:
+
+            items = self.storage.list_tasks(
+                session=session,
+                owner_id=owner_id,
+                limit=limit,
+                offset=offset,
+            )
+
+            total = self.storage.count_tasks(
+                session=session,
+                owner_id=owner_id,
+            )
+
+            return items, total

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-
+from typing import List
 
 class TaskCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
@@ -23,3 +23,9 @@ class TaskResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class TaskListResponse(BaseModel):
+    items:List[TaskResponse]
+    total:int
+    limit:int
+    offset:int        

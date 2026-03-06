@@ -5,7 +5,6 @@ class User:
     def __init__(
         self,
         id: int | None,
-        username: str,
         email: str,
         password_hash: str,
         role: UserRole,
@@ -16,7 +15,6 @@ class User:
         created_at: datetime | None = None,
     ):
         self.id = id
-        self.username = username
         self.email = email
         self.password_hash = password_hash
         self.role = role
@@ -31,7 +29,7 @@ class User:
 
     def __repr__(self) -> str:
         return (
-            f"User(id={self.id}, username={self.username!r}, "
+            f"User(id={self.id},  "
             f"email={self.email!r}, role={self.role.value}, "
             f"is_active={self.is_active}, is_verified={self.is_verified})"
         )

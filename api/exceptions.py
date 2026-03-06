@@ -1,67 +1,117 @@
-from fastapi import Request
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
-from fastapi import status
 
 from utils.exceptions import (
-    AppError,
     ValidationError,
     ConflictError,
     AuthenticationError,
     PermissionDeniedError,
     NotFoundError,
     SecurityError,
+    WeakPasswordError,
+    TokenError,
+    TaskNotFoundError,
+    ForbiddenTaskAccessError,
+    InvalidPaginationError,
 )
 
+"""
+Global Exception Handlers
 
-def register_exception_handlers(app):
-    """
-    Register application-level exception handlers.
+Design Rules:
+- Only handle domain-level exceptions.
+- Do NOT override FastAPI/Pydantic 422 validation.
+- Do NOT catch generic Exception or AppError.
+- HTTP mapping lives here only.
+"""
 
-    ⚠️ IMPORTANT:
-    - We DO NOT catch FastAPI / Pydantic validation errors (422)
-    - We ONLY handle our custom domain exceptions
-    """
 
-    @app.exception_handler(ValidationError)
-    async def validation_error_handler(request: Request, exc: ValidationError):
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"detail": str(exc)},
-        )
+# ---------- 422 Domain Validation ----------
 
-    @app.exception_handler(ConflictError)
-    async def conflict_error_handler(request: Request, exc: ConflictError):
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": str(exc)},
-        )
+async def validation_error_handler(request: Request, exc: ValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc)},
+    )
 
-    @app.exception_handler(AuthenticationError)
-    async def auth_error_handler(request: Request, exc: AuthenticationError):
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": str(exc)},
-        )
 
-    @app.exception_handler(PermissionDeniedError)
-    async def permission_error_handler(request: Request, exc: PermissionDeniedError):
-        return JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content={"detail": str(exc)},
-        )
+# ---------- 409 Conflict ----------
 
-    @app.exception_handler(NotFoundError)
-    async def not_found_handler(request: Request, exc: NotFoundError):
-        return JSONResponse(
-            status_code=status.HTTP_404_NOT_FOUND,
-            content={"detail": str(exc)},
-        )
+async def conflict_error_handler(request: Request, exc: ConflictError):
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={"detail": str(exc)},
+    )
 
-    @app.exception_handler(SecurityError)
-    async def security_error_handler(request: Request, exc: SecurityError):
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"detail": str(exc)},
-        )
 
-    # ❌ لا تكتب handler لـ Exception أو AppError عام
+# ---------- 401 Authentication ----------
+
+async def authentication_error_handler(request: Request, exc: AuthenticationError):
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": str(exc)},
+    )
+
+
+async def token_error_handler(request: Request, exc: TokenError):
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": str(exc)},
+    )
+
+
+# ---------- 403 Permission ----------
+
+async def permission_denied_handler(request: Request, exc: PermissionDeniedError):
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": str(exc)},
+    )
+
+
+async def forbidden_task_handler(request: Request, exc: ForbiddenTaskAccessError):
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content={"detail": "Not allowed to access this task"},
+    )
+
+
+# ---------- 404 Not Found ----------
+
+async def not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={"detail": str(exc)},
+    )
+
+
+async def task_not_found_handler(request: Request, exc: TaskNotFoundError):
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={"detail": "Task not found"},
+    )
+
+
+# ---------- 422 Security ----------
+
+async def security_error_handler(request: Request, exc: SecurityError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc)},
+    )
+
+
+async def invalid_pagination_handler(request: Request, exc: InvalidPaginationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": str(exc)},
+    )
+
+
+# ---------- 400 Weak Password ----------
+
+async def weak_password_handler(request: Request, exc: WeakPasswordError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": "Password does not meet security requirements"},
+    )

@@ -3,6 +3,36 @@
 # ======================
 # Base application error
 # ======================
+
+from __future__ import annotations
+
+
+class TaskNotFoundError(Exception):
+    """
+    Raised when a task does not exist.
+    Domain-level exception (no HTTP knowledge).
+    """
+    pass
+
+
+class ForbiddenTaskAccessError(Exception):
+    """
+    Raised when a user tries to access a task
+    they do not own.
+    """
+    pass
+
+
+class InvalidPaginationError(Exception):
+    """
+    Raised when pagination parameters
+    violate business rules.
+    """
+    pass
+
+
+
+
 class AppError(Exception):
     """Base application error"""
     pass
@@ -49,4 +79,8 @@ class SecurityError(AppError):
 
 class WeakPasswordError(SecurityError):
     """Password does not meet strength requirements"""
+    pass
+
+class TokenError(SecurityError):
+    """ Invalid , Expired or reused token"""
     pass

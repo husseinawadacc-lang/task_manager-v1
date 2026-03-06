@@ -1,33 +1,71 @@
-from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request, status, HTTPException, Header
 from api.deps.auth import get_current_user
+from api.deps.services import (get_auth_service,get_password_reset_service,
+                               get_token_service)
 from api.schemas.user import (
     RegisterRequest,
     RegisterResponse,
-    LoginResponse) 
-from api.schemas.user import loginRequest 
-from api.deps.services import get_auth_service
-from services.auth_s import AuthService
-from models.user import User
-from utils.jwt_utils import create_access_token, create_refresh_token
+    LoginResponse,UserResponse) 
+from api.schemas.user import (loginRequest ,PasswordResetConfirmRequest,
+PasswordResetRequest,)
 from utils.rate_limiter import login_rate_limiter
 from utils.logger import get_logger
 from utils.exceptions import (
-    ConflictError,
-    WeakPasswordError,
     AuthenticationError,
-)
-from fastapi import HTTPException
+    TokenError,
+    WeakPasswordError,)
+from services.token_services import TokenService
+from services.password_reset_services import PasswordResetService
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = get_logger(__name__)
 
 
+@router.get("/me",response_model=UserResponse)
+def get_me(current_user = Depends(get_current_user)):
+    return UserResponse(
+        id=current_user.id,
+        email=current_user.email,
+        role= current_user.role,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at
+    )
 
-@router.get("/me")
-def get_me(current_user:User = Depends(get_current_user)):
-    return current_user
+@router.post("/password-reset/request")
+def password_reset_request(
+    data: PasswordResetRequest,
+    reset_service:PasswordResetService = Depends(get_password_reset_service),
+):   
+    # Enumeration-safe always
+    reset_service.request_reset(data.email)
 
-# =========================
+    return {
+        "message": "If the email exists, a reset link has been sent."
+    }
+
+@router.post("/password-reset/confirm",
+                          )
+def password_reset_confirm(
+    data: PasswordResetConfirmRequest,
+    reset_service:PasswordResetService = Depends(get_password_reset_service),
+):
+    try:
+        reset_service.confirm_reset(
+            token=data.token,
+            password=data.password,
+        )
+
+    except ValueError as e:
+        raise HTTPException(status_code=400,detail=str(e))
+    
+    except TokenError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except WeakPasswordError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"message": "Password reset successful"}
+#=========================
 # Register
 # =========================
 
@@ -38,7 +76,7 @@ def get_me(current_user:User = Depends(get_current_user)):
 )
 def register(
     data: RegisterRequest,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service = Depends(get_auth_service),
 ):
     """
     Register endpoint
@@ -47,36 +85,12 @@ def register(
     - Call AuthService.register
     - Translate business errors to HTTP
     """
+    user = auth_service.register(
+    email=data.email,
+    password=data.password,
+                )
 
-    try:
-        user = auth_service.register(
-            username=data.username,
-            email=data.email,
-            password=data.password,
-            role=data.role,
-        )
-
-        return RegisterResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            role=user.role,
-            is_active=user.is_active,
-            created_at=user.created_at,
-        )
-
-    except ConflictError as e:
-        # Email already exists
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": str(e)},
-        )
-
-    except WeakPasswordError as e:
-       return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"detail": str(e)},
-        )
+    return RegisterResponse(id=user.id,email=user.email)
 
 # =========================
 # Login (json body)
@@ -85,7 +99,8 @@ def register(
 def login(
     data: loginRequest,
     request: Request,
-    auth_service: AuthService = Depends(get_auth_service),
+    auth_service = Depends(get_auth_service),
+    token_service :TokenService = Depends(get_token_service)
 ):
     """
     Login endpoint
@@ -119,15 +134,19 @@ def login(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many login attempts, please try later",
         )
-
+    
     # 4️⃣ Try authentication (BUSINESS LOGIC)
     try:
+    
         user = auth_service.login(
             email=data.email,
             password=data.password,
         )
-    except AuthenticationError:
+        
+    except AuthenticationError as e:
+    
         # 5️⃣ Failed login → record attempt
+
         login_rate_limiter.add_attempt(key)
 
         logger.info(
@@ -137,7 +156,6 @@ def login(
                 "ip": client_ip,
             },
         )
-
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -154,13 +172,34 @@ def login(
             "ip": client_ip,
         },
     )
-     # 8️⃣ Generate tokens
-    access_token = create_access_token(subject=str(user.id))
-    refresh_token = create_refresh_token(subject=str(user.id))
+     # 8️⃣ issue tokens
+    token_pair = token_service.issue_tokens(user)
 
     # 9️⃣ Response
     return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-    )
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        token_type=token_pair.token_type)
+
+
+@router.post("/refresh", response_model=LoginResponse)
+def refresh_token(
+    authorization: str | None = Header(default=None),
+    token_service: TokenService = Depends(get_token_service),
+    
+):
+    # 1️⃣ تحقق من الهيدر
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    # 2️⃣ استخراج refresh token
+    refresh_token = authorization.split(" ", 1)[1]
+
+    # 3️⃣ استدعاء business logic
+    token_pair=token_service.refresh_tokens(refresh_token=refresh_token)
+
+    # 4️⃣ إرجاع response مطابق للـ schema
+    return LoginResponse(
+        access_token=token_pair.access_token,
+        refresh_token=token_pair.refresh_token,
+        token_type=token_pair.token_type)

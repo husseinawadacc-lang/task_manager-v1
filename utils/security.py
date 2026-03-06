@@ -1,102 +1,51 @@
-import os
-import re
 import hashlib
 import hmac
-from core.config import settings
-# =========================
-# Security Constants
-# ==========================
+import secrets
+from core.config import get_settings
+
+settings = get_settings()
 
 
-ITERATIONS = 200_000        # زيادة القوة
-SALT_SIZE = 16              # 16 bytes salt
-
-
-# =========================
-# Password Policy Validation
-# =========================
-
-def validate_password_strength(password: str) -> bool:
-    """
-    Enforces strong password rules.
-    Returns True if password is strong, False otherwise.
-    """
-
-    if not isinstance(password, str):
-        return False
-
-    if len(password) < 8:
-        return False
-
-    if not re.search(r"[A-Z]", password):
-        return False
-
-    if not re.search(r"[a-z]", password):
-        return False
-
-    if not re.search(r"[0-9]", password):
-        return False
-
-    if not re.search(r"[!@#$%^&*()_\-+=<>?]", password):
-        return False
-
-    return True
-
-
-# =========================
-# Hash Password
-# =========================
+# =============================
+# PASSWORD HASHING (مع pepper)
+# =============================
 
 def hash_password(password: str) -> str:
     """
-    Securely hashes password using PBKDF2-HMAC-SHA256.
-    Returns format: salt:hash
+    يحوّل كلمة السر إلى hash.
+    نضيف pepper من settings لزيادة الأمان.
     """
+    peppered = password + settings.PASSWORD_PEPPER
+    return hashlib.sha256(peppered.encode()).hexdigest()
 
-    validate_password_strength(password)
-
-    # Add pepper before hashing
-    password = password + settings.PASSWORD_PEPPER
-
-    salt = os.urandom(SALT_SIZE)
-
-    hash_bytes = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt,
-        ITERATIONS
-    )
-
-    return f"{salt.hex()}:{hash_bytes.hex()}"
-
-
-# =========================
-# Verify Password
-# =========================
 
 def verify_password(password: str, stored_hash: str) -> bool:
     """
-    Verifies password against stored hash.
-    Uses constant-time comparison to prevent timing attacks.
+    يقارن كلمة السر المدخلة مع المخزنة.
     """
+    return hmac.compare_digest(
+        hash_password(password),
+        stored_hash
+    )
 
-    try:
-        salt_hex, hash_hex = stored_hash.split(":")
 
-        salt = bytes.fromhex(salt_hex)
-        expected_hash = bytes.fromhex(hash_hex)
+# =============================
+# RESET TOKEN
+# =============================
 
-        password = password + settings.PASSWORD_PEPPER
+def generate_reset_token() -> str:
+    """
+    يولد token عشوائي آمن.
+    """
+    return secrets.token_urlsafe(32)
 
-        new_hash = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            salt,
-            ITERATIONS
-        )
 
-        return hmac.compare_digest(new_hash, expected_hash)
-
-    except Exception:
-        # Never reveal details
-        return False
+def hash_reset_token(token: str) -> str:
+    """
+    يخزّن token بعد hashing باستخدام SECRET_KEY.
+    """
+    return hmac.new(
+        settings.SECRET_KEY.encode(),
+        token.encode(),
+        hashlib.sha256
+    ).hexdigest()

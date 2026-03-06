@@ -1,24 +1,151 @@
 from abc import ABC, abstractmethod
+from typing import List
+from datetime import datetime
 from models.user import User
 from models.task import Task
-from typing import List, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class PasswordResetTokenRecord:
+    """
+    DTO بسيط لقراءة بيانات reset token
+    """
+
+    id: int
+    user_id: int
+    token_hash: str
+    expires_at: datetime
+    used: bool
+   
+@dataclass
+class RefreshTokenRecord:
+    id: int
+    user_id: int
+    token_hash: str
+    expires_at:datetime
+    used: bool 
+
 
 class BaseStorage(ABC):
+    """
+    Clean storage contract (v2).
+
+    This contract enforces:
+    - User isolation
+    - Pagination at storage level
+    - No full dataset exposure
+    """
+
+    # ---------- Tasks ----------
+
+    @abstractmethod
+    def create_task(
+        self,
+        *,
+        session,
+        title:str,
+        description: str,
+        owner_id:int
+    ) -> Task:
+        """
+        Create anew task Must set:
+        - id
+        -completed = False
+        -created_at internally
+        Return created Task
+        """
+        
+    @abstractmethod
+    def get_task(
+        self,
+        *,
+        session,
+        task_id: int,
+    ) -> Task :
+        """
+        retrieve task by Id Raises Not foundError if not found
+        """
+        
+    @abstractmethod
+    def update_task(
+        self,
+        *,
+        session,
+        task_id:int,
+        title:str |None,
+        description:str |None,
+        completed:bool |None
+    ) -> Task :
+        """
+        Update mutable fields of task return update task
+        raises notfounderror if not found
+        """
+    
+
+    @abstractmethod
+    def delete_task(
+        self,
+        *,
+        session,
+        task_id: int,
+    ) -> None:
+        """
+        delete task by id 
+        raises notfounderror if not found
+
+        """
+        
+    
+    @abstractmethod
+    def list_tasks(
+        self,
+        *,
+        session,
+        owner_id: int,
+        limit: int,
+        offset: int,
+    ) -> List[Task]:
+        """
+        Return paginated slice only.
+        MUST NOT return all tasks.
+        """
+        
+
+    @abstractmethod
+    def count_tasks(
+        self,
+        *,
+        session,
+        owner_id: int,
+    ) -> int:
+        """
+        Return total task count for owner.
+        """
+        
+
     # ============
     # User methods
     # ============
 
     @abstractmethod
-    def save_user(self, user: User) -> User:
+    def create_user(self,*,session, user: User) -> User:
         """
-        Persist a user.
-        - Assigns id if needed.
+        Persist a new user.
+        -  must Assigns id .
         - Returns the saved user.
         """
-        raise NotImplementedError
+        
+
+    @abstractmethod
+    def update_user(self,* , session, user:User)-> User:
+        """
+        update existing user fieldes
+        """
+        
     
     @abstractmethod
-    def get_user_by_email(self,email:str)-> User |None:
+    def get_user_by_email(self,*, session, email:str)-> User :
         """
         Docstring for get_user_by_email
         login by email
@@ -28,48 +155,105 @@ class BaseStorage(ABC):
         :return: Description
         :rtype: User | None
         """
-        raise NotImplementedError
+        
     
     @abstractmethod
-    def get_user_by_id(self,user_id:int)-> User |None:
-        pass
-
-
-    # =========================
-    # Task Storage
-    # =========================
+    def get_user_by_id(self,*, session, user_id:int)-> User :
+        """fetch user by id      """
+        
 
     @abstractmethod
-    def save_task(self, task: Task) -> Task:
+    def update_user_password(
+        self,
+        *,
+        session,
+        user_id: int,
+        password_hash: str,
+    ) -> None:
         """
-        Create or update task.
+        Update stored password hash 
         """
-        raise NotImplementedError
+        
+
+    # ---------- Password Reset ----------
+    @abstractmethod
+    def create_password_reset_token(
+        self,
+        *,
+        session,
+        user_id: int,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> int:
+        """
+        persist password rest token
+        return internal ID 
+        """
+        
 
     @abstractmethod
-    def get_task_by_id(self, task_id: int) -> Optional[Task]:
+    def get_password_reset_token(
+        self,
+        *,
+        session,
+        token_hash: str,
+    ) -> PasswordResetTokenRecord :
         """
-        Fetch task by its ID.
+        retrieve reset tokeb by hash
+        raises notfounderror if not found
         """
-        raise NotImplementedError
+        
 
     @abstractmethod
-    def list_tasks_by_owner(self, owner_id: int) -> List[Task]:
+    def mark_password_reset_token_used(self,*,session, token_id: int) -> None:
         """
-        List all tasks for a specific user.
+        mark reset token as used
+        raises notfounderror if not found
+
         """
-        raise NotImplementedError
+    
+
+    # ============================
+    # Refresh Token Storage
+    # ============================
 
     @abstractmethod
-    def list_all_tasks(self) -> List[Task]:
+    def create_refresh_token(
+        self,
+        *,
+        session,
+        user_id: int,
+        token_hash: str,
+        expires_at: datetime |None,
+    ) -> int:
         """
-        Admin-only: list all tasks.
+        Persist a refresh token.
+        Returns  internal id.
         """
-        raise NotImplementedError
+        
+
 
     @abstractmethod
-    def delete_task(self, task_id: int) -> None:
+    def get_refresh_token(
+        self,
+        *,
+        session,
+        token_hash: str,
+    )->RefreshTokenRecord:
         """
-        Hard delete task.
+        Retrieve refresh token record by hash.
         """
-        raise NotImplementedError
+        
+
+
+    @abstractmethod
+    def mark_refresh_token_used(
+        self,
+        *,
+        session,
+        token_id: int,
+    ) -> None:
+        """
+        Mark refresh token as used (one-time).
+        """
+        

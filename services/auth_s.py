@@ -1,131 +1,228 @@
-from typing import Optional
 from core.enums.user_role import UserRole
 from models.user import User
+
 from storage.base_st import BaseStorage
-from utils.security import hash_password, verify_password, validate_password_strength
-from utils.exceptions import (
-    AuthenticationError,
-    ConflictError,
-    WeakPasswordError,
+
+from utils.security import (
+    hash_password,
+    verify_password,
 )
 
+from services.password_policy_s import PasswordPolicyService
+from services.unit_of_work import UnitOfWork
+
+from utils.exceptions import (
+    ConflictError,
+    AuthenticationError,
+    NotFoundError,
+)
 
 
 class AuthService:
     """
     AuthService
-    -----------
+    ===========
+
     This service contains ONLY authentication business logic.
 
-    ❌ It knows NOTHING about:
+    The service layer is responsible for:
+        - business rules
+        - translating storage errors
+        - coordinating operations
+
+    This service DOES NOT know anything about:
         - HTTP
         - FastAPI
-        - Request / Response
-        - Headers
-        - client_ip
-        - rate limiting
         - JWT
-
-    ✅ It knows about:
-        - Users
-        - Password rules
-        - Authentication logic
-        - Storage
+        - rate limiting
     """
 
-    def __init__(self, storage: BaseStorage):
+    def __init__(
+        self,
+        storage: BaseStorage,
+        password_policy: PasswordPolicyService,
+        uow: UnitOfWork,
+        token_service,
+    ):
         self.storage = storage
-        
-      
+        self.password_policy = password_policy
+        self.uow = uow
+        self.token_service=token_service
     # =====================================================
     # REGISTER
     # =====================================================
+
     def register(
         self,
         *,
-        username: str,
         email: str,
         password: str,
-        role: UserRole = UserRole.USER,
-        is_active: bool = True,
     ) -> User:
         """
         Register a new user.
 
         Business rules:
-        - Email must be unique
-        - Password must meet security requirements
-        - Password is always stored hashed
+        - email must be unique
+        - password must satisfy password policy
+        - password must be stored hashed
         """
 
-        # 1️⃣ Check email uniqueness
-        if self.storage.get_user_by_email(email):
-            raise ConflictError("email already exists")
+        # ==================================================
+        # 1️⃣ Start transaction
+        # ==================================================
 
-        # 2️⃣ Validate password strength (pure security rule)
-        if not validate_password_strength(password):
-            raise WeakPasswordError(
-                "password does not meet security requirements"
+        with self.uow as session:
+
+            # ==================================================
+            # 2️⃣ Check email uniqueness
+            # ==================================================
+            # Storage throws NotFoundError if user does not exist.
+            # That is the normal path for registration.
+            # ==================================================
+
+            try:
+                self.storage.get_user_by_email(
+                    session=session,
+                    email=email,
+                )
+
+                # If we reach here → user exists
+                raise ConflictError("Email already registered")
+
+            except NotFoundError:
+                # Expected case: user does not exist
+                pass
+
+            # ==================================================
+            # 3️⃣ Validate password policy
+            # ==================================================
+
+            self.password_policy.validate(password)
+
+            # ==================================================
+            # 4️⃣ Hash password
+            # ==================================================
+
+            password_hash = hash_password(password)
+
+            # ==================================================
+            # 5️⃣ Create domain user object
+            # ==================================================
+
+            user = User(
+                id=None,
+                email=email,
+                password_hash=password_hash,
+                role=UserRole.USER,
+                is_active=True,
             )
 
-        # 3️⃣ Hash password (pepper from settings)
-        password_hash = hash_password(
-            password,)
+            # ==================================================
+            # 6️⃣ Persist user using storage
+            # ==================================================
+            # Storage performs ONLY database operations.
+            # No commit happens here.
+            # Commit is handled by UnitOfWork.
+            # ==================================================
 
-        # 4️⃣ Create user entity
-        user = User(
-            id=None,
-            username=username,
-            email=email,
-            password_hash=password_hash,
-            role=role,
-            is_active=is_active,
-        )
+            user = self.storage.create_user(
+                session=session,
+                user=user,
+            )
 
-        # 5️⃣ Persist user
-        self.storage.save_user(user)
-
-        return user
+            return user
 
     # =====================================================
     # LOGIN
     # =====================================================
-    def login(self, *, email: str, password: str) -> User:
+
+    def login(
+        self,
+        *,
+        email: str,
+        password: str,
+    ) -> User:
         """
-        Authenticate a user by email & password.
+        Authenticate user.
 
-        Business rules:
-        - Email must exist
-        - Password must match
-        - User must be active
+        Security rules:
+        - Do NOT reveal if email exists
+        - Do NOT reveal account status
+        - Always return generic authentication error
         """
 
-        user = self.storage.get_user_by_email(email)
+        with self.uow as session:
 
-        if not user:
-            raise AuthenticationError("invalid credentials")
+            # ==================================================
+            # 1️⃣ Fetch user
+            # ==================================================
 
-        if not user.is_active:
-            raise AuthenticationError("user is inactive")
+            try:
+                user = self.storage.get_user_by_email(
+                    session=session,
+                    email=email,
+                )
 
-        if not verify_password(
-            password,
-            user.password_hash,
-                    ):
-            raise AuthenticationError("invalid credentials")
+            except NotFoundError:
+                # Prevent user enumeration attack
+                raise AuthenticationError("Invalid credentials")
 
-        return user
+            # ==================================================
+            # 2️⃣ Verify password
+            # ==================================================
+
+            if not verify_password(password, user.password_hash):
+                raise AuthenticationError("Invalid credentials")
+
+            # ==================================================
+            # 3️⃣ Check account status
+            # ==================================================
+
+            if not user.is_active:
+                raise AuthenticationError("Account disabled")
+
+            # ==================================================
+            # 4️⃣ Authentication success
+            # ==================================================
+
+            return user
 
     # =====================================================
     # GET USER BY ID
     # =====================================================
-    def get_user_by_id(self, user_id: int) -> Optional[User]:
+
+    def get_user_by_id(
+        self,
+        *,
+        user_id: int,
+    ) -> User:
         """
-        Retrieve user by ID.
+        Retrieve user by id.
 
         Used by:
-        - Auth dependencies
-        - Token decoding logic
+        - auth dependency
+        - token validation
         """
 
-        return self.storage.get_user_by_id(user_id)
+        with self.uow as session:
+
+            return self.storage.get_user_by_id(
+                session=session,
+                user_id=user_id,
+            )
+        
+    def get_user_from_token(self, token: str) -> User:
+        """
+        Resolve user from access token.
+        """
+
+        user_id = self.token_service.validate_access_token(token)
+
+        with self.uow as session:
+
+            user = self.storage.get_user_by_id(
+                session=session,
+                user_id=user_id
+            )
+
+        return user    

@@ -64,22 +64,22 @@ def test_login_invalid_password(client, user):
     assert "detail" in body
     assert body["detail"] == "Invalid email or password"  
 
-def test_login_inactive_user(client, auth_service):
+def test_login_inactive_user(client, auth_service,storage):
     """
     GIVEN an inactive user
     WHEN logging in with correct credentials
     THEN return 401 Unauthorized
     """
-
     # إنشاء مستخدم غير نشط
     user = auth_service.register(
-        username="inactive_user",
         email="inactive@test.com",
         password="StrongPass1!",
-        role="user",
-        is_active=False,
-    )
-
+        )
+    #make user deactiave
+    user.is_active= False
+    with auth_service.uow as session:
+        storage.update_user(user=user,session=session)
+    #try agian to login after deactaviate
     response = client.post(
         "/api/v1/auth/login",
         json={
@@ -87,9 +87,7 @@ def test_login_inactive_user(client, auth_service):
             "password": "StrongPass1!",
         },
     )
-
     assert response.status_code == 401
-
     body = response.json()
     assert "detail" in body
     assert body["detail"] == "Invalid email or password"          

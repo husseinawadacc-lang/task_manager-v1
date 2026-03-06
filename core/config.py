@@ -23,16 +23,23 @@ class Settings(BaseSettings):
     # ⚙️ App Settings
     # =========================
     DEBUG: bool = False
-    STORAGE_BACKEND: str = "sqlite"
+    STORAGE_BACKEND: str = "sqlalchemy"
+
+    # =========================
+    # data base postgresql
+    # =========================
+
+    DATABASE_URL:str 
+    
     # =========================
     # 📁 Load from .env
     # =========================
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_file_encoding="utf-8",)
+        env_file_encoding="utf-8",
+        extra="ignore",)#ignore unknow env vars safely
     
 # Cache settings (important for performance)
 @lru_cache
 def get_settings() -> Settings:
     return Settings()  # Return an instance of Settings class
-settings = get_settings()  # Load settings once at startup

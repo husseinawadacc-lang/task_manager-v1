@@ -2,20 +2,12 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
-from jose import jwt, JWTError
-from core.config import  settings
-
-# ==========================================================
-# Exceptions
-# ==========================================================
-
-class TokenError(Exception):
-    """
-    Raised when a JWT token is invalid, expired, or malformed.
-    """
-    pass
+from jose import jwt,JWTError
+from core.config import get_settings
+from utils.exceptions import TokenError
 
 
+settings = get_settings()
 # ==========================================================
 # Access Token
 # ==========================================================
@@ -49,58 +41,15 @@ def create_access_token(
 
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-
-# ==========================================================
-# Refresh Token
-# ==========================================================
-
-def create_refresh_token(
-    *,
-    subject: str | int,
-) -> str:
-    """
-    Create a REFRESH token.
-
-    Refresh token:
-    - Long-lived
-    - Used ONLY to get a new access token
-    - Never used to access protected resources directly
-
-    Parameters:
-    - subject: user identifier (usually user.id)
-    """
-
-    now = datetime.now(timezone.utc)
-    expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-
-    payload: Dict[str, Any] = {
-        "sub": str(subject),
-        "type": "refresh",        # Distinguish from access token
-        "iat": now,
-        "exp": expire,
-    }
-
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-
-
 # ==========================================================
 # Decode / Validate Token
 # ==========================================================
-
-def decode_token(
-    *,
-    token: str,
-    expected_type: str | None = None,
-) -> Dict[str, Any]:
+def decode_access_token(token: str) -> Dict[str, Any]:
     """
-    Decode and validate a JWT token.
-
-    Parameters:
-    - token: raw JWT string
-    - expected_type: optional ("access" or "refresh")
+    Validate and decode access token.
 
     Raises:
-    - TokenError if token is invalid, expired, or wrong type
+        TokenError: if token invalid or expired
     """
 
     try:
@@ -110,17 +59,11 @@ def decode_token(
             algorithms=[settings.ALGORITHM],
         )
 
-    except JWTError as exc:
-        # Covers:
-        # - expired token
-        # - invalid signature
-        # - malformed token
-        raise TokenError("Invalid or expired token") from exc
+    except JWTError:
+        raise TokenError("Invalid or expired access token")
 
-    # Optional token type check
-    if expected_type:
-        token_type = payload.get("type")
-        if token_type != expected_type:
-            raise TokenError("Invalid token type")
+    if payload.get("type") != "access":
+        raise TokenError("Invalid token type")
 
     return payload
+

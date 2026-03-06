@@ -4,29 +4,22 @@ from datetime import datetime
 from core.enums.user_role import UserRole
 
 class RegisterRequest(BaseModel):
-    username: str 
     email: EmailStr
     password: str 
-    role: UserRole= UserRole.USER  
 
 class RegisterResponse(BaseModel):
     id: int
-    username: str
     email: EmailStr
-    role: UserRole
-    is_active:bool
-    created_at:datetime    
-
+    
 class UserResponse(BaseModel):
     id: int
-    username: str
     email: EmailStr
     role: UserRole
     is_active:bool
     created_at:datetime
 
     class Config:
-        from_attributes = True
+        from_attributes = True # for orm/domin model compatibility
 
 class loginRequest(BaseModel):
     email: EmailStr
@@ -35,4 +28,11 @@ class loginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
-    refresh_token: str    
+    refresh_token: str  
+
+class PasswordResetConfirmRequest(BaseModel):
+    token:str
+    password:str      
+
+class PasswordResetRequest(BaseModel):
+    email:EmailStr    

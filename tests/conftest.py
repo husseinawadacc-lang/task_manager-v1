@@ -21,7 +21,10 @@ import os
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("PASSWORD_PEPPER", "test-password-pepper")
 os.environ.setdefault("JWT_ALGORITHM", "HS256")
-
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+psycopg2://postgres:password@localhost:5432/testdb"
+)
 # =================================================
 # Now safe imports
 # =================================================
@@ -49,27 +52,32 @@ from storage.memory_storage import MemoryStorage
 
 from services.auth_s import AuthService
 from services.task_s import TaskService
-
+from services.unit_of_work import UnitOfWork
+from services.token_services import TokenService
 from api.deps.services import (
     get_storage,
     get_auth_service,
-    get_task_service,
-)
-
+    get_task_service,)
+from utils.security import hash_reset_token,hash_password
+from utils.token import  generate_refresh_token,hash_refresh_token
+from services.password_policy_s import PasswordPolicyService
 from utils.jwt_utils import create_access_token
 from core.enums.user_role import UserRole
 from utils.rate_limiter import login_rate_limiter
 from utils.rate_limiter import RateLimiter
+from services.unit_of_work import UnitOfWork
+from db.session import SessionLocal
 
 # =================================================
 # for test window_seconds, we use a short duration to speed up tests
 # =================================================
 test_login_rate_limiter = RateLimiter(max_attempts=5, window_seconds=1)  # 1 second window for testing
+settings = get_settings()
 # =================================================
 # 1️⃣ Environment variables (same as production)
 # =================================================
 
-@pytest.fixture(scope="session", autouse=True)
+
 def _set_test_env():
     """
     Ensure ALL required environment variables exist.
@@ -86,8 +94,25 @@ def _set_test_env():
 # =================================================
 # 3️⃣ Storage layer (shared in-memory DB)
 # =================================================
+from db.session import engine
+from db.base import Base
 
-@pytest.fixture(scope="session")
+
+@pytest.fixture(scope="session", autouse=True)
+def create_test_tables():
+    """
+    Create all tables before running integration tests.
+    """
+
+    Base.metadata.create_all(bind=engine)
+
+    yield
+
+    Base.metadata.drop_all(bind=engine)
+
+
+
+@pytest.fixture
 def storage():
     """
     Single MemoryStorage instance for the test session.
@@ -99,36 +124,48 @@ def storage():
     """
     return MemoryStorage()
 
-@pytest.fixture(autouse=True)
-def clear_storage(storage):
-    """
-    Clear storage before each test to ensure test isolation.
-    """
-    storage.clear()
-
-
+@pytest.fixture
+def uow():
+   """
+   provide a unitofwork instance for tests
+   transaction mangement is handeled internally
+   """
+   return UnitOfWork()
+    
 # =================================================
 # 4️⃣ Services layer (REAL services)
 # =================================================
-
-@pytest.fixture(scope="session")
-def auth_service(storage):
+@pytest.fixture
+def auth_service(storage,password_policy,uow,token_service):
     """
     AuthService wired exactly like production,
     but using MemoryStorage.
     """
     return AuthService(
         storage=storage,
-        
-    )
+        password_policy=password_policy,
+        uow=uow,
+        token_service=token_service,
+            )
 
-
-@pytest.fixture(scope="session")
-def task_service(storage):
+@pytest.fixture
+def task_service(storage,uow):
     """
     TaskService with same storage as auth.
     """
-    return TaskService(storage=storage)
+    return TaskService(storage=storage,
+                       uow =uow
+                       )
+
+@pytest.fixture
+def token_service(storage,uow):
+    """
+    token service for tests
+    """
+    return TokenService(
+        storage=storage,
+        uow=uow,
+    )
 
 # =================================================
 # rate limiter (shared instance to track attempts)
@@ -139,38 +176,21 @@ def reset_login_rate_limiter():
     to avoid cross-test interference."""
     login_rate_limiter.reset_all()
 
-# =================================================
-# 5️⃣ FastAPI dependency overrides
-# =================================================
-
-@pytest.fixture(scope="session", autouse=True)
-def override_dependencies(storage, auth_service, task_service):
-    """
-    Override FastAPI dependencies so:
-    - API uses MemoryStorage
-    - API uses REAL services
-    """
-    app.dependency_overrides[get_storage] = lambda: storage
-    app.dependency_overrides[get_auth_service] = lambda: auth_service
-    app.dependency_overrides[get_task_service] = lambda: task_service
-
-    yield
-
-    app.dependency_overrides.clear()
 
 
 # =================================================
 # 6️⃣ Test client
 # =================================================
-
 @pytest.fixture()
-def client():
-    """
-    FastAPI TestClient with overridden deps.
-    """
+def client(storage, auth_service, task_service):
+    app.dependency_overrides[get_storage] = lambda: storage
+    app.dependency_overrides[get_auth_service] = lambda: auth_service
+    app.dependency_overrides[get_task_service] = lambda: task_service
+
     with TestClient(app) as c:
         yield c
 
+    app.dependency_overrides.clear()
 
 # =================================================
 # 7️⃣ Users (REAL domain users)
@@ -182,24 +202,24 @@ def user(auth_service):
     Normal user with valid password rules.
     """
     return auth_service.register(
-        username="testuser",
         email="user@test.com",
         password="StrongPass1!",
-        role=UserRole.USER,
-    )
-
+            )
+   
 
 @pytest.fixture()
-def admin(auth_service):
+def admin(auth_service,uow):
     """
     Admin user.
     """
-    return auth_service.register(
-        username="adminuser",
+    user=auth_service.register(
         email="admin@test.com",
         password="StrongPass1!",
-        role=UserRole.ADMIN,
-    )
+            )
+    user.role = UserRole.ADMIN
+    with uow as session:
+      auth_service.storage.update_user(user=user,session=session)        
+    return user
 
 
 @pytest.fixture()
@@ -208,10 +228,9 @@ def other_user(auth_service):
     Another normal user (ownership testing).
     """
     return auth_service.register(
-        username="otheruser",
         email="other@test.com",
         password="StrongPass1!",
-        role="user",
+        
     )
 
 
@@ -233,41 +252,155 @@ def admin_headers(admin):
     """
     Authorization header for admin.
     """
-    token = create_access_token(admin.id)
+    token = create_access_token(subject= str(admin.id))
     return {"Authorization": f"Bearer {token}"}
 
 
 # =================================================
 # 9️⃣ Expired token (ATTACK / FAILURE CASE)
 # =================================================
+@pytest.fixture
+def valid_password_reset_token(storage,uow, user):
+    raw_token = "valid-reset-token-123"
+    token_hash = hash_reset_token(raw_token)
+
+    with uow as session:
+
+        storage.create_password_reset_token(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            session=session
+        )
+
+    return raw_token
+
+@pytest.fixture
+def expired_password_reset_token(storage,uow, user):
+    raw_token = "expired-reset-token"
+    token_hash = hash_reset_token(raw_token)
+
+    with uow as session:
+
+        storage.create_password_reset_token(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            session=session
+        )
+    return raw_token
+
+@pytest.fixture
+def used_password_reset_token(storage, uow, user):
+
+    raw_token = "used-reset-token"
+    token_hash = hash_reset_token(raw_token)
+
+    with uow as session:
+
+        token_id = storage.create_password_reset_token(
+            session=session,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+        )
+
+        storage.mark_password_reset_token_used(
+            session=session,
+            token_id=token_id
+        )
+
+    return raw_token
 
 @pytest.fixture()
-def expired_token(settings, user):
+def expired_user_headers(user):
     """
-    Create an EXPIRED JWT.
+    Authorization header with EXPIRED access token
+    for an existing user.
+    """
 
-    IMPORTANT:
-    - This logic lives ONLY in tests
-    - jwt_utils remains clean
-    """
+    now = datetime.now(timezone.utc)
+
     payload = {
         "sub": str(user.id),
-        "iat": datetime.now(timezone.utc) - timedelta(minutes=10),
-        "exp": datetime.now(timezone.utc) - timedelta(minutes=5),
         "type": "access",
+        "iat": now - timedelta(minutes=10),
+        "exp": now - timedelta(minutes=5),  # ⛔ expired
     }
-    return jwt.encode(
+
+    expired_token = jwt.encode(
         payload,
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )
 
+    return {
+        "Authorization": f"Bearer {expired_token}"
+    }
 
-@pytest.fixture()
-def expired_headers(expired_token):
-    return {"Authorization": f"Bearer {expired_token}"}
 
+@pytest.fixture
+def valid_refresh_headers(user,uow, storage):
+    # 1️⃣ أنشئ JWT refresh token
+    payload = {
+        "sub": str(user.id),
+        "type": "refresh",
+        "exp": datetime.now(timezone.utc)
+        + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    }
 
+    jwt_token = jwt.encode(
+        payload,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+    # 2️⃣ hash الـ JWT نفسه (مش raw string)
+    token_hash = hash_refresh_token(jwt_token)
+
+    # 3️⃣ خزّنه في storage
+    with uow as session:
+        storage.create_refresh_token(
+        session=session,    
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc)
+        + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+
+    # 4️⃣ رجّعه في الهيدر
+    return {
+        "Authorization": f"Bearer {jwt_token}"
+    }
+
+@pytest.fixture
+def expired_refresh_headers(user,uow, storage):
+    raw_refresh_token = generate_refresh_token()
+    token_hash = hash_refresh_token(raw_refresh_token)
+    
+    with uow as session :
+        storage.create_refresh_token(
+        session= session,    
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+
+        payload = {
+        "sub": str(user.id),
+        "type": "refresh",
+        "exp": datetime.now(timezone.utc) + timedelta(days=1),
+    }
+
+        jwt_token = jwt.encode(
+        payload,
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+    return {
+        "Authorization": f"Bearer {jwt_token}"
+    }
 # =================================================
 # 🔟 Tasks (ownership & permissions)
 # =================================================
@@ -294,3 +427,45 @@ def other_user_task(task_service, other_user):
         description="Owned by other user",
         owner_id=other_user.id,
     )
+
+
+
+@pytest.fixture
+def many_tasks(task_service, user):
+    """
+    Create multiple tasks for a single user.
+    Used for pagination & performance tests.
+    """
+    tasks = []
+
+    for i in range(30):
+        task = task_service.create_task(
+            title=f"Task {i}",
+            description="Pagination test task",
+            owner_id=user.id,
+        )
+        tasks.append(task)
+
+    return tasks
+#=================================
+#=== password policy
+#=================================
+@pytest.fixture
+def password_policy():
+    return PasswordPolicyService()
+
+
+@pytest.fixture
+def valid_login_payload(auth_service):
+    """
+    Valid login payload for an existing user.
+    """
+    user = auth_service.register(
+        email="user@example.com",
+        password="StrongPass1!",
+    )
+
+    return {
+        "email": user.email,
+        "password": "StrongPass1!",
+    }

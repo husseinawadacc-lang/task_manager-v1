@@ -1,4 +1,4 @@
-
+from datetime import datetime
 # -------------------------------------------------
 # TEST 1: Successful Registration
 # -------------------------------------------------
@@ -17,11 +17,9 @@ def test_register_success(client):
     # -------------------------------
     # بيانات مستخدم جديدة وصحيحة
     payload = {
-        "username": "newuser",
         "email": "newuser@test.com",
         "password": "Strong@Pass1!",
-        "role": "user",
-    }
+            }
 
     # -------------------------------
     # WHEN
@@ -35,9 +33,6 @@ def test_register_success(client):
     # -------------------------------
     # THEN
     # -------------------------------
-    print("JSON:", response.json())
-    print("Response status code:", response.status_code)
-    print("TEXT:", response.text)
     # 1️⃣ كود الحالة
     assert response.status_code == 201
 
@@ -50,16 +45,10 @@ def test_register_success(client):
 
     # لازم يكون في ID
     assert "id" in body
-    assert isinstance(body["id"], int)
-
-    # البيانات الأساسية
-    assert body["username"] == payload["username"]
     assert body["email"] == payload["email"]
-    assert body["role"] == payload["role"]
-
-    # الحساب نشط افتراضيًا
-    assert body["is_active"] is True
-
+    assert "role" not in body
+    assert "is_active" not in body
+    assert "created_at" not in body
     # -------------------------------
     # Security assertions
     # -------------------------------
@@ -138,21 +127,21 @@ def test_register_weak_password(client):
         },
     )
 
-    assert response.status_code == 422   
+    assert response.status_code == 400 
     assert "password" in response.json()["detail"].lower()      
 
-def test_register_invalid_role(client):
+def test_register_ignore_extra_field(client):
     response = client.post(
         "/api/v1/auth/register",
         json={
-            "username": "badrole",
+            "username": "badrole",# not use
             "email": "badrole@test.com",
             "password": "StrongPass1!",
-            "role": "superadmin",  # ❌ invalid role
+            "role": "superadmin",  # ❌ not use role
         },
     )
 
-    assert response.status_code == 422    
+    assert response.status_code == 201    
 
 def test_register_missing_email(client):
     response = client.post(
@@ -188,10 +177,9 @@ def test_register_response_does_not_include_password(client):
 
 def test_password_is_hashed_in_storage(auth_service):
     user = auth_service.register(
-        username="hashuser",
         email="hash@test.com",
         password="StrongPass1!",
-        role="user",
+        
     )
 
     assert user.password_hash != "StrongPass1!"
