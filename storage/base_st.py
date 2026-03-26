@@ -1,87 +1,104 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional,Dict
 from datetime import datetime
-from models.user import User
-from models.task import Task
 from dataclasses import dataclass
 
+from domain.user import User
+from domain.task import Task
+from domain.project import Project
+from domain.audit_log import AuditLog
+# ================================
+# 🔐 DTOs
+# ================================
 
 @dataclass
 class PasswordResetTokenRecord:
     """
-    DTO بسيط لقراءة بيانات reset token
+    DTO لقراءة بيانات reset token
     """
-
     id: int
     user_id: int
     token_hash: str
     expires_at: datetime
     used: bool
-   
+
+
 @dataclass
 class RefreshTokenRecord:
     id: int
     user_id: int
     token_hash: str
-    expires_at:datetime
-    used: bool 
+    expires_at: datetime
+    used: bool
+    revoked: bool
+    family_id: str
 
+
+# ================================
+# 🧱 Base Storage Contract
+# ================================
 
 class BaseStorage(ABC):
     """
-    Clean storage contract (v2).
+    Clean Storage Contract (Final Version)
 
-    This contract enforces:
-    - User isolation
-    - Pagination at storage level
-    - No full dataset exposure
+    Principles:
+    - Storage does NOT control transactions
+    - Storage returns Domain models (NOT ORM)
+    - Service handles business logic
+    - Supports pagination & isolation
     """
 
-    # ---------- Tasks ----------
+    # ==========================================================
+    # TASKS
+    # ==========================================================
 
     @abstractmethod
     def create_task(
         self,
         *,
         session,
-        title:str,
-        description: str,
-        owner_id:int
+        task: Task
     ) -> Task:
         """
-        Create anew task Must set:
-        - id
-        -completed = False
-        -created_at internally
-        Return created Task
+        Persist a new task.
+
+        Must:
+        - assign id
+        - set created_at if missing
+        - set completed default if needed
+
+        Returns created Task
         """
-        
+
     @abstractmethod
     def get_task(
         self,
         *,
         session,
         task_id: int,
-    ) -> Task :
+    ) -> Task:
         """
-        retrieve task by Id Raises Not foundError if not found
+        Retrieve task by ID.
+
+        Raises NotFoundError if not found.
         """
-        
+
     @abstractmethod
     def update_task(
         self,
         *,
         session,
-        task_id:int,
-        title:str |None,
-        description:str |None,
-        completed:bool |None
-    ) -> Task :
+        task:Task,
+    ) -> Task:
         """
-        Update mutable fields of task return update task
-        raises notfounderror if not found
+        Partial update.
+
+        Only non-None fields should be updated.
+
+        Returns updated Task.
+        Raises NotFoundError if not found.
         """
-    
 
     @abstractmethod
     def delete_task(
@@ -91,26 +108,26 @@ class BaseStorage(ABC):
         task_id: int,
     ) -> None:
         """
-        delete task by id 
-        raises notfounderror if not found
+        Delete task by ID.
 
+        Raises NotFoundError if not found.
         """
-        
-    
+
     @abstractmethod
     def list_tasks(
         self,
         *,
         session,
         owner_id: int,
+        project_id:int,
         limit: int,
         offset: int,
     ) -> List[Task]:
         """
-        Return paginated slice only.
-        MUST NOT return all tasks.
+        Return paginated tasks.
+
+        MUST NOT return full dataset.
         """
-        
 
     @abstractmethod
     def count_tasks(
@@ -118,49 +135,60 @@ class BaseStorage(ABC):
         *,
         session,
         owner_id: int,
+        project_id: int,
     ) -> int:
         """
-        Return total task count for owner.
+        Return total number of tasks.
         """
-        
 
-    # ============
-    # User methods
-    # ============
+    # ==========================================================
+    # USERS
+    # ==========================================================
 
     @abstractmethod
-    def create_user(self,*,session, user: User) -> User:
+    def create_user(
+        self,
+        *,
+        session,
+        user: User
+    ) -> User:
         """
         Persist a new user.
-        -  must Assigns id .
-        - Returns the saved user.
+        Must assign ID.
         """
-        
 
     @abstractmethod
-    def update_user(self,* , session, user:User)-> User:
+    def update_user(
+        self,
+        *,
+        session,
+        user: User
+    ) -> User:
         """
-        update existing user fieldes
+        Update user fields.
         """
-        
-    
+
     @abstractmethod
-    def get_user_by_email(self,*, session, email:str)-> User :
+    def get_user_by_email(
+        self,
+        *,
+        session,
+        email: str
+    ) -> User:
         """
-        Docstring for get_user_by_email
-        login by email
-        :param self: Description
-        :param email: Description
-        :type email: str
-        :return: Description
-        :rtype: User | None
+        Retrieve user by email.
         """
-        
-    
+
     @abstractmethod
-    def get_user_by_id(self,*, session, user_id:int)-> User :
-        """fetch user by id      """
-        
+    def get_user_by_id(
+        self,
+        *,
+        session,
+        user_id: int
+    ) -> User:
+        """
+        Retrieve user by ID.
+        """
 
     @abstractmethod
     def update_user_password(
@@ -171,11 +199,13 @@ class BaseStorage(ABC):
         password_hash: str,
     ) -> None:
         """
-        Update stored password hash 
+        Update password hash.
         """
-        
 
-    # ---------- Password Reset ----------
+    # ==========================================================
+    # PASSWORD RESET TOKENS
+    # ==========================================================
+
     @abstractmethod
     def create_password_reset_token(
         self,
@@ -186,10 +216,8 @@ class BaseStorage(ABC):
         expires_at: datetime,
     ) -> int:
         """
-        persist password rest token
-        return internal ID 
+        Persist password reset token.
         """
-        
 
     @abstractmethod
     def get_password_reset_token(
@@ -197,25 +225,25 @@ class BaseStorage(ABC):
         *,
         session,
         token_hash: str,
-    ) -> PasswordResetTokenRecord :
+    ) -> PasswordResetTokenRecord:
         """
-        retrieve reset tokeb by hash
-        raises notfounderror if not found
+        Retrieve reset token by hash.
         """
-        
 
     @abstractmethod
-    def mark_password_reset_token_used(self,*,session, token_id: int) -> None:
+    def mark_password_reset_token_used(
+        self,
+        *,
+        session,
+        token_id: int
+    ) -> None:
         """
-        mark reset token as used
-        raises notfounderror if not found
-
+        Mark reset token as used.
         """
-    
 
-    # ============================
-    # Refresh Token Storage
-    # ============================
+    # ==========================================================
+    # REFRESH TOKENS
+    # ==========================================================
 
     @abstractmethod
     def create_refresh_token(
@@ -224,14 +252,12 @@ class BaseStorage(ABC):
         session,
         user_id: int,
         token_hash: str,
-        expires_at: datetime |None,
+        family_id: str,
+        expires_at: datetime,
     ) -> int:
         """
-        Persist a refresh token.
-        Returns  internal id.
+        Persist refresh token.
         """
-        
-
 
     @abstractmethod
     def get_refresh_token(
@@ -239,21 +265,178 @@ class BaseStorage(ABC):
         *,
         session,
         token_hash: str,
-    )->RefreshTokenRecord:
+    ) -> RefreshTokenRecord:
         """
-        Retrieve refresh token record by hash.
+        Retrieve refresh token.
         """
-        
-
 
     @abstractmethod
     def mark_refresh_token_used(
         self,
         *,
         session,
-        token_id: int,
+        token_id: int
     ) -> None:
         """
-        Mark refresh token as used (one-time).
+        Mark token as used.
         """
-        
+
+    @abstractmethod
+    def revoke_refresh_token(
+        self,
+        *,
+        session,
+        token_id: int
+    ) -> None:
+        """
+        Revoke single token.
+        """
+
+    @abstractmethod
+    def revoke_token_family(
+        self,
+        *,
+        session,
+        family_id: str
+    ) -> None:
+        """
+        Revoke all tokens in family.
+        """
+
+    @abstractmethod
+    def revoke_tokens_by_user(
+        self,
+        *,
+        session,
+        user_id: int
+    ) -> None:
+        """
+        Revoke all user tokens.
+        """
+
+
+
+
+    # ==========================================================
+    # PROJECT OPERATIONS 🔥 (NEW)
+    # ==========================================================
+
+    @abstractmethod
+    def create_project(
+        self,
+        *,
+        session,
+        project: Project
+    ) -> Project:
+        """Create new project"""
+
+    @abstractmethod
+    def get_project(
+        self,
+        *,
+        session,
+        project_id: int,
+    ) -> Project:
+        """Get project by id"""
+
+    @abstractmethod
+    def list_projects(
+        self,
+        *,
+        session,
+        owner_id: int,
+    ) -> List[Project]:
+        """List user projects"""
+
+    @abstractmethod
+    def delete_project(
+        self,
+        session,
+        project_id:int,
+    )  ->None:
+        """
+        delete project by id
+        """  
+
+    # ==========================================================
+    # PROJECT MEMBERS (RBAC)
+    # ==========================================================
+
+    @abstractmethod
+    def add_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+        role: str = "member",
+    ) -> None:
+        """
+        Add user to project with role.
+        """
+
+
+    @abstractmethod
+    def remove_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> None:
+        """
+        Remove user from project.
+        """
+
+
+    @abstractmethod
+    def list_project_members(
+        self,
+        *,
+        session,
+        project_id: int,
+    ) -> Dict[int, str]:
+        """
+        Return all members of project.
+
+        Format:
+            { user_id: role }
+        """
+
+
+    @abstractmethod
+    def get_project_member_role(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> Optional[str]:
+        """
+        Return role of user in project.
+
+        Returns:
+            role OR None
+        """
+
+
+    @abstractmethod
+    def is_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> bool:
+        """
+        Check if user belongs to project.
+        """  
+
+    @abstractmethod
+    def create_audit_log(
+        self,
+        session,
+        log:AuditLog,
+
+    )-> AuditLog:
+        pass    

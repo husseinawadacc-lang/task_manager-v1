@@ -99,3 +99,99 @@ def test_login_success_returns_tokens(client, user):
     assert "access_token" in response.json()
 
     
+def test_access_token_tampering(client, user_headers):
+
+    token = user_headers["Authorization"].split(" ")[1]
+
+    parts = token.split(".")
+    tampered = parts[0] + "." + parts[1] + ".invalidsignature"
+
+    headers = {"Authorization": f"Bearer {tampered}"}
+
+    response = client.get("/api/v1/auth/me", headers=headers)
+
+    assert response.status_code == 401
+
+def test_access_token_after_logout(client, user_headers):
+
+    client.post("/api/v1/auth/logout", headers=user_headers)
+
+    response = client.get("/api/v1/auth/me", headers=user_headers)
+
+    assert response.status_code == 401
+
+def test_refresh_token_reuse_attack(client, valid_refresh_headers):
+
+    client.post("/api/v1/auth/refresh", headers=valid_refresh_headers)
+
+    response = client.post("/api/v1/auth/refresh", headers=valid_refresh_headers)
+
+    assert response.status_code == 401
+
+def test_refresh_after_logout(client, valid_refresh_headers):
+
+    client.post("/api/v1/auth/logout", headers=valid_refresh_headers)
+
+    response = client.post("/api/v1/auth/refresh", headers=valid_refresh_headers)
+
+    assert response.status_code == 401
+
+def test_idor_task_access(client, user_headers, other_user_task):
+
+    response = client.get(
+        f"/api/v1/tasks/{other_user_task.id}",
+        headers=user_headers
+    )
+
+    assert response.status_code == 404
+
+def test_permission_escalation(client, user_headers):
+
+    response = client.delete(
+        "/api/v1/tasks/1",
+        headers=user_headers
+    )
+
+    assert response.status_code in [403, 404]
+
+def test_pagination_validate(client, user_headers):
+
+    response = client.get(
+        "/api/v1/tasks?limit=100000",
+        headers=user_headers
+    )
+
+    assert response.status_code == 422
+
+def test_pagination_negative_limit(client, user_headers):
+
+    response = client.get(
+        "/api/v1/tasks?limit=-10",
+        headers=user_headers
+    )
+
+    assert response.status_code == 422    
+
+def test_request_without_token(client):
+
+    response = client.get("/api/v1/tasks")
+
+    assert response.status_code == 401
+
+def test_invalid_token_type(client, valid_refresh_headers):
+
+    response = client.get(
+        "/api/v1/auth/me",
+        headers=valid_refresh_headers
+    )
+
+    assert response.status_code == 401
+
+def test_expired_token(client, expired_user_headers):
+
+    response = client.get(
+        "/api/v1/auth/me",
+        headers=expired_user_headers
+    )
+
+    assert response.status_code == 401                                        

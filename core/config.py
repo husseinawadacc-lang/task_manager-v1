@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-
+    JWT_ISSUER: str = "task-manager-api"
+    JWT_AUDIENCE: str = "task-manager-users"
     # ======================
     # Rate Limiting
     # ======================
@@ -19,6 +20,10 @@ class Settings(BaseSettings):
 
     REGISTER_MAX_ATTEMPTS: int = 3
     REGISTER_WINDOW_SECONDS: int = 600  # 10 minutes
+
+
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
     # =========================
     # ⚙️ App Settings
     # =========================
@@ -35,7 +40,7 @@ class Settings(BaseSettings):
     # 📁 Load from .env
     # =========================
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=". env",
         env_file_encoding="utf-8",
         extra="ignore",)#ignore unknow env vars safely
     

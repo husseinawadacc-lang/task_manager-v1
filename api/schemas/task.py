@@ -1,10 +1,12 @@
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field,ConfigDict
 from datetime import datetime
 from typing import List
 
 class TaskCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str|None = Field(default=None, max_length=1000)
+    project_id:int
 
 
 class TaskUpdateRequest(BaseModel):
@@ -20,9 +22,8 @@ class TaskResponse(BaseModel):
     completed: bool
     owner_id: int
     created_at:datetime
-
-    class Config:
-        from_attributes = True
+    priority : str
+    model_config= ConfigDict(from_attributes = True)
 
 class TaskListResponse(BaseModel):
     items:List[TaskResponse]

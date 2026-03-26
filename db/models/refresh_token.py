@@ -35,3 +35,7 @@ class RefreshTokenORM(Base):
 
     # Creation time
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    
+    revoked = Column(Boolean,default=False,nullable=False)
+
+    family_id =Column(String,index=True)

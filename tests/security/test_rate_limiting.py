@@ -20,9 +20,8 @@ def test_login_rate_limit_blocks_after_multiple_failures(client):
         )
 
     # المهم السلوك: block
-    assert last_response.status_code in (429, 403)
+    assert last_response.status_code == 429
  
-from api.deps.services import get_auth_service
 def test_successful_login_does_not_increment_rate_limit(
     client,
     valid_login_payload,

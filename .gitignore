@@ -14,3 +14,7 @@ venv/
 
 # OS
 .DS_Store
+
+data/*.db
+logs/
+*.log

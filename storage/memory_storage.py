@@ -1,16 +1,15 @@
-from datetime import datetime
+from datetime import datetime,timezone
 from typing import Dict, List
-
 from storage.base_st import (
     BaseStorage,
     PasswordResetTokenRecord,
-    RefreshTokenRecord,
-)
-
-from models.user import User
-from models.task import Task
+    RefreshTokenRecord,)
+from domain.user import User
+from domain.task import Task
+from domain.project import Project
+from domain.audit_log import AuditLog
 from utils.exceptions import NotFoundError
-
+import copy
 
 class MemoryStorage(BaseStorage):
     """
@@ -33,16 +32,18 @@ class MemoryStorage(BaseStorage):
         # storage containers
         self._users: Dict[int, User] = {}
         self._tasks: Dict[int, Task] = {}
-
         self._password_reset_tokens: Dict[int, PasswordResetTokenRecord] = {}
         self._refresh_tokens: Dict[int, RefreshTokenRecord] = {}
-
+        self._projects:Dict[int,Project]= {}
+        self._project_members:Dict[int,Dict[int,str]]={}
+        self._audit_logs: Dict[int,AuditLog]={}
         # auto increment counters (simulate database sequences)
         self._user_id_seq = 1
         self._task_id_seq = 1
         self._password_token_id_seq = 1
         self._refresh_token_id_seq = 1
-
+        self._project_id_seq =1
+        self._audit_id_logs =1
     # ======================================================
     # User operations
     # ======================================================
@@ -112,26 +113,19 @@ class MemoryStorage(BaseStorage):
     # Task operations
     # ======================================================
 
-    def create_task(self, *, session, title: str, description: str, owner_id: int) -> Task:
-        """
-        Create new task.
-        """
+    def create_task(self, *, session, task: Task) -> Task:
 
-        task = Task(
-            id=self._task_id_seq,
-            title=title,
-            description=description,
-            owner_id=owner_id,
-            completed=False,
-            created_at=datetime.utcnow(),
-        )
-
+        task.id = self._task_id_seq
         self._task_id_seq += 1
 
-        self._tasks[task.id] = task
+        task.completed = task.completed or False
+        task.created_at = task.created_at or datetime.now(timezone.utc)
+        task.priority = task.priority or "low"
+
+        self._tasks[task.id] = copy.deepcopy(task)
 
         return task
-
+    
     def get_task(self, *, session, task_id: int) -> Task:
         """
         Retrieve task by id.
@@ -144,34 +138,28 @@ class MemoryStorage(BaseStorage):
 
         return task
 
-    def update_task(
-        self,
-        *,
-        session,
-        task_id: int,
-        title: str | None,
-        description: str | None,
-        completed: bool | None,
-    ) -> Task:
-        """
-        Update task fields.
-        """
+    def update_task(self, *, session, task: Task) -> Task:
 
-        task = self._tasks.get(task_id)
+        existing = self._tasks.get(task.id)
 
-        if not task:
+        if not existing:
             raise NotFoundError("Task not found")
 
-        if title is not None:
-            task.title = title
+        if not task.id :
+            raise ValueError ("Task ID is require")
+        if task.title is not None:
+            existing.title = task.title
 
-        if description is not None:
-            task.description = description
+        if task.description is not None:
+            existing.description = task.description
 
-        if completed is not None:
-            task.completed = completed
+        if task.completed is not None:
+            existing.completed = task.completed
 
-        return task
+        if task.priority is not None:
+            existing.priority = task.priority
+
+        return existing
 
     def delete_task(self, *, session, task_id: int) -> None:
         """
@@ -192,25 +180,27 @@ class MemoryStorage(BaseStorage):
         *,
         session,
         owner_id: int,
+        project_id :int,
         limit: int,
         offset: int,
     ) -> List[Task]:
-        """
-        Return paginated tasks for a user.
-        """
 
-        tasks = [t for t in self._tasks.values() if t.owner_id == owner_id]
+        tasks = [t for t in self._tasks.values() if t.owner_id == owner_id and
+                 t.project_id == project_id
+                 ]
 
-        tasks.sort(key=lambda t: t.id)
+        tasks.sort(key=lambda t: t.created_at , reverse=True)
 
-        return tasks[offset : offset + limit]
-
-    def count_tasks(self, *, session, owner_id: int) -> int:
+        return tasks[offset: offset + limit]
+    
+    def count_tasks(self, *, session, owner_id: int,project_id:int) -> int:
         """
         Count tasks for pagination.
         """
 
-        return sum(1 for t in self._tasks.values() if t.owner_id == owner_id)
+        return sum(1 for t in self._tasks.values() if t.owner_id == owner_id
+                   and t.project_id == project_id
+                   )
 
     # ======================================================
     # Password reset tokens
@@ -286,6 +276,7 @@ class MemoryStorage(BaseStorage):
         user_id: int,
         token_hash: str,
         expires_at: datetime | None,
+        family_id:str,
     ) -> int:
         """
         Create refresh token.
@@ -300,6 +291,8 @@ class MemoryStorage(BaseStorage):
             token_hash=token_hash,
             expires_at=expires_at,
             used=False,
+            revoked=False,
+            family_id=family_id
         )
 
         self._refresh_tokens[token_id] = record
@@ -338,3 +331,169 @@ class MemoryStorage(BaseStorage):
             raise NotFoundError("Refresh token not found")
 
         token.used = True
+
+    def revoke_refresh_token(
+            self,
+            *,
+            session,
+            token_id,
+    )-> None:
+        
+        token= self._refresh_tokens.get(token_id)
+        if not token:
+           raise NotFoundError("Refresh token not found")
+        
+        token.revoked= True
+
+
+    def revoke_token_family(
+            self,
+            *,
+            session,
+            family_id:str,
+    )-> None:
+        
+        for token in self._refresh_tokens.values():
+            if token.family_id == family_id:
+               token.revoked = True        
+
+
+    def revoke_tokens_by_user(
+            self,
+            *,
+            session,
+            user_id:int,
+    )-> None:
+        
+        for token in self._refresh_tokens.values():
+            if token.user_id == user_id:
+               token.revoked = True        
+
+
+    def create_project(self, *, session, project: Project) -> Project:
+
+        project.id = self._project_id_seq
+        self._project_id_seq += 1
+
+        project.created_at = datetime.now(timezone.utc)
+
+        self._projects[project.id] = copy.deepcopy(project)
+
+        # 🔥 RBAC FIX
+        self._project_members[project.id] = {
+            project.owner_id: "owner"
+        }
+
+        return project
+
+    def get_project(self, *, session, project_id: int) -> Project:
+
+        project = self._projects.get(project_id)
+
+        if not project:
+            raise NotFoundError("Project not found")
+
+        return project  
+    
+    def list_projects(self, *, session, owner_id: int) -> List[Project]:
+
+        return [
+            p for p in self._projects.values()
+            if p.owner_id == owner_id
+        ]
+    def delete_project(
+            self,
+            *,
+            session,
+            project_id: int,
+        ) -> None:
+
+            if project_id not in self._projects:
+                raise NotFoundError("Project not found")
+            
+            self._project_members.pop(project_id,None)
+
+            del self._projects[project_id]
+
+    # ======================================================
+    # Project Members (RBAC FIXED)
+    # ======================================================
+
+    def add_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+        role: str = "member",
+    ) -> None:
+
+        members = self._project_members.setdefault(project_id, {})
+
+        members[user_id] = role
+
+
+    # ------------------------------------------------------
+
+    def get_project_member_role(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> str | None:
+
+        members = self._project_members.get(project_id, {})
+
+        return members.get(user_id)
+
+
+    # ------------------------------------------------------
+
+    def remove_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> None:
+
+        members = self._project_members.get(project_id, {})
+
+        members.pop(user_id, None)
+
+
+    # ------------------------------------------------------
+
+    def list_project_members(
+        self,
+        *,
+        session,
+        project_id: int,
+    ) -> Dict[int, str]:
+
+        return  Dict(self._project_members.get(project_id, {}))
+
+
+    # ------------------------------------------------------
+
+    def is_project_member(
+        self,
+        *,
+        session,
+        project_id: int,
+        user_id: int,
+    ) -> bool:
+
+        return user_id in self._project_members.get(project_id, {})
+    
+    def create_audit_log(self, *, session, log: AuditLog) -> AuditLog:
+
+        log.id = self._audit_id_seq
+        self._audit_id_seq += 1
+
+        log.created_at = datetime.now(timezone.utc)
+
+        self._audit_logs[log.id] = log
+
+        return log

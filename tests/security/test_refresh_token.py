@@ -49,3 +49,20 @@ def test_refresh_with_valid_token_returns_new_access_token(
 
     assert "access_token" in body
     assert body["access_token"]
+
+
+def test_refresh_token_cannot_be_reused(client, valid_refresh_headers):
+
+    response1 = client.post(
+        "/api/v1/auth/refresh",
+        headers=valid_refresh_headers
+    )
+
+    assert response1.status_code == 200
+
+    response2 = client.post(
+        "/api/v1/auth/refresh",
+        headers=valid_refresh_headers
+    )
+
+    assert response2.status_code == 401    

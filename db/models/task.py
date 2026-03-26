@@ -15,23 +15,27 @@ class TaskORM(Base):
     """
     ORM model for tasks table.
     """
-
     __tablename__ = "tasks"
 
-    # Primary key
     id = Column(Integer, primary_key=True)
 
-    # Task title
     title = Column(String, nullable=False)
-
-    # Task description
     description = Column(String)
 
-    # Owner of the task
+    # 🔥 ربط المستخدم
     owner_id = Column(Integer, ForeignKey("users.id"), index=True)
 
-    # Task completion status
+    # 🔥 ربط المشروع (الجديد)
+    project_id = Column(Integer, ForeignKey("projects.id",ondelete="CASCADE"), index=True)
+
     completed = Column(Boolean, default=False)
 
-    # Creation timestamp
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
+
+    # 🔥 AI Priority
+    priority = Column(String, default="low")
+
+    # 🔥 Index مهم للأداء
+    __table_args__ = (
+        Index("ix_tasks_owner_project", "owner_id", "project_id"),
+    )

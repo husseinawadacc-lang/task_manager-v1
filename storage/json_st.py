@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 from datetime import datetime
 from storage.base_st import BaseStorage
-from models.user import User
-from core.enums.user_role import UserRole
-from models.task import Task
+from domain.user import User
+from core.enums.role import UserRole
+from domain.task import Task
 from typing import List, Optional
 
 class JSONStorage(BaseStorage):

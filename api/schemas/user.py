@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,ConfigDict
 from pydantic import EmailStr
 from datetime import datetime
-from core.enums.user_role import UserRole
+from core.enums.role import UserRole
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -18,8 +18,7 @@ class UserResponse(BaseModel):
     is_active:bool
     created_at:datetime
 
-    class Config:
-        from_attributes = True # for orm/domin model compatibility
+    model_config= ConfigDict(from_attributes = True )# for orm/domin model compatibility
 
 class loginRequest(BaseModel):
     email: EmailStr

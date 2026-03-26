@@ -1,15 +1,17 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from core.config import get_settings
-from utils.jwt_utils import create_access_token, decode_access_token
-from utils.token import generate_refresh_token, hash_refresh_token
+from core.auth.jwt import create_access_token, decode_and_verify_jwt,_verify_access_token_type
+from core.auth.token import generate_refresh_token, hash_token
 from utils.exceptions import TokenError, NotFoundError, AuthenticationError
 from storage.base_st import BaseStorage
 from services.unit_of_work import UnitOfWork
-
+from core.cache.token_blacklist import is_token_blacklisted
+from utils.logger import get_logger
+import secrets
 
 settings = get_settings()
-
+logger = get_logger(__name__)
 
 # ============================================================
 # Value Object
@@ -92,10 +94,13 @@ class TokenService:
         """
 
         with self.uow as session:
+            
+            family_id =secrets.token_hex(16)
 
             return self._issue_tokens(
                 session=session,
-                user_id=user_id
+                user_id=user_id,
+                family_id=family_id
             )
 
 
@@ -103,7 +108,7 @@ class TokenService:
 # Internal Token Creation (shared logic)
 # ============================================================
 
-    def _issue_tokens(self, *, session, user_id: int) -> TokenPair:
+    def _issue_tokens(self, *, session, user_id: int,family_id:str) -> TokenPair:
         """
         Internal helper.
 
@@ -122,7 +127,7 @@ class TokenService:
         raw_refresh_token = generate_refresh_token()
 
         # 3️⃣ Hash refresh token before storing
-        token_hash = hash_refresh_token(raw_refresh_token)
+        token_hash = hash_token(raw_refresh_token)
 
         # 4️⃣ Compute expiration time
         expires_at = datetime.now(timezone.utc) + timedelta(
@@ -134,9 +139,12 @@ class TokenService:
             session=session,
             user_id=user_id,
             token_hash=token_hash,
-            expires_at=expires_at
+            expires_at=expires_at,
+            family_id= family_id
         )
-
+        logger.info(
+                    "Tokens issued",
+                    extra={"user_id": user_id} )
         # 6️⃣ Return tokens to client
         return TokenPair(
             access_token=access_token,
@@ -162,7 +170,7 @@ class TokenService:
         """
 
         # 1️⃣ Hash incoming refresh token
-        token_hash = hash_refresh_token(refresh_token)
+        token_hash = hash_token(refresh_token)
 
         with self.uow as session:
 
@@ -172,30 +180,42 @@ class TokenService:
                     session=session,
                     token_hash=token_hash
                 )
-
             except NotFoundError:
                 raise AuthenticationError("invalid refresh token")
-
+                  
             # 3️⃣ Prevent reuse
+            if record.revoked :
+                raise AuthenticationError("invalid refresh token")    
+            # 6️⃣ Issue new token pair
+            
             if record.used:
+                logger.warning(
+                            "Refresh token reuse detected",
+                            extra={"user_id": record.user_id} )
+                self.storage.revoke_token_family(
+                    session=session,
+                    family_id=record.family_id)
                 raise AuthenticationError("invalid refresh token")
-
+            
             # 4️⃣ Enforce expiration
             if record.expires_at < datetime.now(timezone.utc):
                 raise AuthenticationError("invalid refresh token")
+            
 
             # 5️⃣ Mark old refresh token used
             self.storage.mark_refresh_token_used(
                 session=session,
                 token_id=record.id
             )
-
-            # 6️⃣ Issue new token pair
+            logger.info(
+                            "Refresh token rotated",
+                            extra={"user_id": record.user_id} )
+            
             return self._issue_tokens(
                 session=session,
-                user_id=record.user_id
+                user_id=record.user_id,
+                family_id=record.family_id
             )
-
 
 # ============================================================
 # Validate Access Token
@@ -209,20 +229,127 @@ class TokenService:
         --------
         user_id
 
-        This function:
-        - verifies JWT
-        - extracts subject
+        Flow:
+        -----
+        ✔ decode JWT (includes signature + exp + blacklist)
+        ✔ verify token type
+        ✔ extract user_id
         """
 
-        try:
-            payload = decode_access_token(token)
+        # 🔥 مصدر واحد للتحقق (يشمل blacklist)
+        payload = decode_and_verify_jwt(token)
 
-        except TokenError:
-            raise TokenError("Invalid access token")
+        # ✔ تأكد إنه access token
+        _verify_access_token_type(payload)
 
+        # ✔ استخراج user_id
         user_id = payload.get("sub")
 
         if not user_id:
             raise TokenError("Invalid access token payload")
 
         return int(user_id)
+
+
+    def revoke_refresh_token(self, raw_token: str) -> None:
+
+        token_hash = hash_token(raw_token)
+
+        with self.uow as session:
+
+            try:
+                record = self.storage.get_refresh_token(
+                    session=session,
+                    token_hash=token_hash
+                )
+
+            except NotFoundError:
+                return
+
+            self.storage.revoke_refresh_token(
+                session=session,
+                token_id=record.id
+            )
+
+            logger.info(
+                "Refresh token revoked",
+                extra={"user_id": record.user_id}
+            )
+
+
+    def revoke_token_family(self, family_id: str) -> None:
+
+        with self.uow as session:
+
+            self.storage.revoke_token_family(
+                session=session,
+                family_id=family_id
+            )
+
+            logger.info(
+                "Token family revoked",
+                extra={"family_id": family_id}
+            )
+    
+    def logout(self, refresh_token: str) -> None:
+
+        token_hash = hash_token(refresh_token)
+
+        with self.uow as session:
+
+            try:
+                record = self.storage.get_refresh_token(
+                    session=session,
+                    token_hash=token_hash
+                )
+
+            except NotFoundError:
+                return
+
+            self.storage.revoke_token_family(
+                session=session,
+                family_id=record.family_id
+            )
+
+            logger.info(
+                "User logout",
+                extra={"user_id": record.user_id}
+            )
+
+
+    def logout_all(self, user_id: int) -> None:
+        """
+        Logout user from ALL devices.
+
+        Security behaviour
+        ------------------
+        This function revokes every refresh token belonging to the user.
+
+        Result:
+        -------
+        - User cannot refresh tokens anymore
+        - All sessions become invalid once access tokens expire
+
+        Typical use cases:
+        ------------------
+        1️⃣ User chooses "Logout from all devices"
+        2️⃣ Password change
+        3️⃣ Security incident
+        4️⃣ Admin revokes sessions
+        """
+
+        # UnitOfWork manages the transaction lifecycle.
+        # Storage MUST NOT commit transactions itself.
+        with self.uow as session:
+
+            # revoke all refresh tokens for the user
+            self.storage.revoke_tokens_by_user(
+                session=session,
+                user_id=user_id
+            )
+
+            # security log
+            logger.info(
+                "All user sessions revoked",
+                extra={"user_id": user_id}
+            )        

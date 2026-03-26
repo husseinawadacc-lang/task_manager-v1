@@ -5,7 +5,7 @@ from core.config import get_settings
 def get_engine():
     settings = get_settings()
     #Enigine manages connection pool
-
+    
     return create_engine(
         settings.DATABASE_URL,
         pool_pre_ping=True, # يتحقق من الاتصال قبل الاستخدام
@@ -21,5 +21,4 @@ SessionLocal = sessionmaker(
     autocommit=False,# no commit or rollback automatic
     future=True,
 )
-
 

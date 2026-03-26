@@ -1,12 +1,13 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from storage.base_st import BaseStorage
-from services.password_policy_s import PasswordPolicyService
-from utils.security import (
-    generate_reset_token,
-    hash_reset_token,
-    hash_password,)
+from services.password_policy_service import PasswordPolicyService
+from core.auth.token import  generate_reset_token, hash_token
+from core.auth.password import hash_password
 from utils.exceptions import TokenError,NotFoundError
 from services.unit_of_work import UnitOfWork
+
+logger = logging.getLogger(__name__)
 
 class PasswordResetService:
     """
@@ -52,13 +53,15 @@ class PasswordResetService:
                 raw_token = generate_reset_token()
 
                 # 3️⃣ Hash token before storage
-                token_hash = hash_reset_token(raw_token)
+                token_hash = hash_token(raw_token)
 
                 # 4️⃣ Compute expiration
                 expires_at = datetime.now(timezone.utc) + timedelta(
                     minutes=self.RESET_TOKEN_EXPIRE_MINUTES
                 )
-
+                logger.info(
+                            "Password reset requested",
+                            extra={"email": user.email})
                 # 5️⃣ Persist reset token
                 self.storage.create_password_reset_token(
                     user_id=user.id,
@@ -94,7 +97,7 @@ class PasswordResetService:
         self.password_policy.validate(password)
 
         # 2️⃣ Hash incoming token
-        token_hash = hash_reset_token(token)
+        token_hash = hash_token(token)
 
         # 3️⃣ Start transaction
         with self.uow as session:
@@ -126,7 +129,9 @@ class PasswordResetService:
                 user_id=record.user_id,
                 password_hash=password_hash,
             )
-
+            logger.info(
+                        "Password reset completed",
+                        extra={"token_used": True}                    )
             # 9️⃣ Mark token used
             self.storage.mark_password_reset_token_used(
                 session=session,

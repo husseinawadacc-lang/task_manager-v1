@@ -5,9 +5,10 @@ from db.session import engine
 
 # import models so they register in metadate
 from db.models import user
-from db .models import task
+from db.models import task
 from db.models import refresh_token
 from db.models import password_reset
+from db.models.project import ProjectORM
 def init_db():
     """
     Initialize database tables.
