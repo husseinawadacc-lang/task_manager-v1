@@ -41,6 +41,7 @@ from services.token_services import TokenService
 from services.auth_service import AuthService
 from services.password_reset_services import PasswordResetService
 from services.project_service import ProjectService
+from services.ai_service import AIService
 
 # ==========================================================
 # UnitOfWork
@@ -209,3 +210,14 @@ def get_password_reset_service(
         password_policy=policy,
         uow=uow,
     )
+
+def get_ai_service() -> AIService:
+    """
+    Provide AIService instance
+
+    🔥 لاحقًا:
+    - ممكن نحقن OpenAI client
+    - أو config
+    - أو caching layer
+    """
+    return AIService()

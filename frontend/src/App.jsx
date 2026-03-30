@@ -3,7 +3,7 @@
 // ===============================
 
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-
+import RegisterPage from "./pages/RegisterPage";
 import LoginPage from "./pages/LoginPage";
 import Dashboard from "./pages/Dashboard";
 import Landing from "./pages/Landing";
@@ -35,7 +35,19 @@ function App() {
             )
           }
         />
-
+      {/* ===============================
+            REGISTER
+        =============================== */}
+        <Route
+          path="/register"
+          element={
+            !token ? (
+              <RegisterPage />
+            ) : (
+              <Navigate to="/dashboard" />
+            )
+          }
+        />
         {/* ===============================
             DASHBOARD (PROTECTED)
         =============================== */}

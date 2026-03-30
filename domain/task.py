@@ -11,6 +11,8 @@ class Task:
         description: str = "",
         completed: bool = False,
         priority:str = "low",
+        parent_id: int | None = None,
+        subtasks: list["Task"] | None = None,
         completed_at: datetime | None = None,
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
@@ -23,6 +25,8 @@ class Task:
         self.description = description or ""
         self.completed = completed
         self.priority =priority
+        self.parent_id = parent_id
+        self.subtasks = subtasks or []
         self.completed_at = completed_at
         self.created_at = created_at or datetime.now(timezone.utc)
         self.updated_at = updated_at

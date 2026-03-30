@@ -202,6 +202,12 @@ class MemoryStorage(BaseStorage):
                    and t.project_id == project_id
                    )
 
+
+    def get_tasks_by_parent(self,*,session, parent_id: int) -> List[Task]:
+            return [
+                t for t in self.tasks.values()
+                if t.parent_id == parent_id
+            ]
     # ======================================================
     # Password reset tokens
     # ======================================================

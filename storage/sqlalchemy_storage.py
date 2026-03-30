@@ -177,6 +177,7 @@ class SQLAlchemyStorage(BaseStorage):
             description=orm.description,
             owner_id=orm.owner_id,
             project_id=orm.project_id,
+            parent_id=orm.parent_id,
             completed=orm.completed,
             created_at=orm.created_at,
             priority=orm.priority,
@@ -191,12 +192,12 @@ class SQLAlchemyStorage(BaseStorage):
         session: Session,
         task: Task
     ) -> Task:
-
         orm_task = TaskORM(
             title=task.title,
             description=task.description,
             owner_id=task.owner_id,
             project_id = task.project_id,
+            parent_id =task.parent_id,
             completed=task.completed or False,
             created_at=task.created_at or None,
             priority=task.priority or "low",
@@ -301,6 +302,23 @@ class SQLAlchemyStorage(BaseStorage):
                                           )
 
         return session.execute(stmt).scalar_one()
+    
+    # --------------------------------------------------------
+    def get_tasks_by_parent(self, *, session, parent_id: int) -> List[Task]:
+        stmt = select(TaskORM).where(TaskORM.parent_id == parent_id)
+
+        tasks = session.execute(stmt).scalars().all()
+
+        return [self.map_task(t) for t in tasks]    
+    # ------------------------------------------------------
+    def map_task_with_subtasks(self,orm: TaskORM) -> Task:
+        task = self.map_task(orm)
+
+        task.subtasks = [
+            self.map_task(sub) for sub in orm.subtasks
+        ]
+
+        return task
 
     # ==========================================================
     # PASSWORD RESET TOKENS

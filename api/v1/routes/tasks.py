@@ -35,8 +35,21 @@ def create_task(
         title=input.title,
         description=input.description,
         project_id=input.project_id,
-    )
-    return task
+        parent_id=input.parent_id,)
+    
+    if input.auto_generate:
+        task_service.generate_subtasks_for_task(
+
+            task_id=task.id,
+            title=task.title,
+            owner_id=current_user.id,
+            project_id=input.project_id or None,
+        )
+    task_with_subtasks= task_service.get_task_with_subtasks(task_id=task.id,
+                                                            requester_id=current_user.id)
+
+    return task_with_subtasks
+    
 
 
 @router.get(
@@ -48,7 +61,7 @@ def get_task(
     task_service: TaskService = Depends(get_task_service),
     current_user: User = Depends(require_permission(Permission.TASK_VIEW)),
 ):
-    return task_service.get_task(
+    return task_service.get_task_with_subtasks(
         task_id=task_id,
         requester_id=current_user.id,
     )
@@ -64,12 +77,16 @@ def update_task(
     task_service: TaskService = Depends(get_task_service),
     current_user: User = Depends(require_permission(Permission.TASK_UPDATE)),
 ):
-    return task_service.update_task(
+    updated= task_service.update_task(
         task_id=task_id,
         requester_id=current_user.id,
         title=data.title,
         description=data.description,
         completed=data.completed,
+    )
+    return task_service.get_task_with_subtasks(
+        task_id=updated.id,
+        requester_id= current_user.id
     )
 
 

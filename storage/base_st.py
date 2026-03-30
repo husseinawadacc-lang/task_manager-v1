@@ -140,6 +140,10 @@ class BaseStorage(ABC):
         """
         Return total number of tasks.
         """
+    @abstractmethod
+    def get_tasks_by_parent(self, session, parent_id: int)-> list [Task]:
+        pass
+    
 
     # ==========================================================
     # USERS

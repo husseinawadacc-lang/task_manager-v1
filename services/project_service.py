@@ -84,6 +84,7 @@ class ProjectService:
     def get_project(
         self,
         *,
+        session,
         project_id: int,
         requester_id: int,
     ) -> Project:
@@ -98,22 +99,20 @@ class ProjectService:
         - others → NotFound (Anti-IDOR)
         """
 
-        with self.uow as session:
+        project = self.storage.get_project(
+            session=session,
+            project_id=project_id,
+                    )
 
-            project = self.storage.get_project(
-                session=session,
-                project_id=project_id,
-            )
+        # 🔥 pass project instead of re-fething
+        self.require_role(
+            session=session,
+            project=project,
+            user_id=requester_id,
+            allowed_roles=["admin", "member", "viewer"],
+        )
 
-            # 🔥 pass project instead of re-fething
-            self.require_role(
-                session=session,
-                project=project,
-                user_id=requester_id,
-                allowed_roles=["admin", "member", "viewer"],
-            )
-
-            return project
+        return project
 
     # =====================================================
     # LIST PROJECTS

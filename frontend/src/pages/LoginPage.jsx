@@ -6,7 +6,7 @@ import { useState } from "react";
 import api from "../api/api";
 import toast from "react-hot-toast";
 import {  useNavigate } from "react-router-dom";
-
+import { Link } from "react-router-dom";
 
 
 function LoginPage() {
@@ -31,6 +31,7 @@ function LoginPage() {
     // ✅ validation
     if (!email || !password) {
       toast.error("Please fill all fields");
+      console.log("loginpage rendered")
       return;
     }
 
@@ -136,11 +137,15 @@ function LoginPage() {
             border: "none",
             cursor: "pointer"
           }}
-        >
-
+          >
           {loading ? "Logging in..." : "Login"}
-
-        </button>
+            </button>
+          <p style={{ textAlign: "center" }}>
+            Don't have an account?{" "}
+            <Link to="/register" style={{ color: "#3b82f6" }}>
+              Register
+            </Link>
+          </p>
 
       </form>
 

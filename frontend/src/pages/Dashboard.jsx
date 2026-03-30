@@ -1,108 +1,133 @@
-// ===============================
-// Dashboard.jsx (FINAL CLEAN VERSION)
-// ===============================
+// =======================================
+// Dashboard.jsx (Clean SaaS Version)
+// =======================================
 
-import { useEffect, useState, useRef } from "react";
-import api from "../api/api";
-import TaskInput from "../components/TaskInput";
-import TaskList from "../components/TaskList";
-import Sidebar from "../components/Sidebar";
+import { useEffect, useState } from "react";
+
+// 🧠 Services (بدل api مباشرة)
+import {
+  getTasks,
+  createTask as createTaskAPI,
+  updateTask as updateTaskAPI,
+  deleteTask as deleteTaskAPI,
+} from "../services/taskService";
+
+import {
+  getProjects,
+  createProject as createProjectAPI,
+  deleteProject as deleteProjectAPI,
+} from "../services/projectService";
+
+// 🧩 Components
+import Sidebar from "../components/layout/Sidebar";
+import TaskInput from "../components/task/TaskInput";
+import TaskList from "../components/task/TaskList";
+
 import toast from "react-hot-toast";
 
 function Dashboard() {
 
+  // ===============================
+  // 🎯 STATE MANAGEMENT
+  // ===============================
+
   const [tasks, setTasks] = useState([]);
+  const [projects, setProjects] = useState([]);
+
+  const [selectedProject, setSelectedProject] = useState(null);
+
   const [loading, setLoading] = useState(true);
+
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
 
-  const [projects, setProjects] = useState([]);
-  const [selectedProject, setSelectedProject] = useState(null);
+  // ===============================
+  // 📦 FETCH PROJECTS
+  // ===============================
+  const fetchProjects = async () => {
+    
+      const data = await getProjects();
 
-  const searchRef = useRef(null);
+      setProjects(data);
+
+  };
 
   // ===============================
-  // FETCH TASKS
+  // 📦 FETCH TASKS
   // ===============================
   const fetchTasks = async () => {
+    console.log("Fetching tasks for project:", selectedProject);
     if (!selectedProject) return;
 
     setLoading(true);
 
     try {
-      const res = await api.get(`/tasks?project_id=${selectedProject}`);
-      setTasks(res.data.items);
-    } catch (err) {
+      const data = await getTasks(selectedProject);
+
+      // API بيرجع { items, total }
+      setTasks(data.items);
+
+    } catch {
       toast.error("Failed to load tasks ❌");
     } finally {
       setLoading(false);
     }
   };
-
   // ===============================
-  // FETCH PROJECTS
+  // ⚙️ EFFECTS (Lifecycle)
   // ===============================
-  const fetchProjects = async () => {
-    try {
-      const res = await api.get("/projects");
-      setProjects(res.data);
 
-      const exists = res.data.find(p => p.id === selectedProject);
+  // أول تحميل (تحميل المشاريع)
+  useEffect(() => {
+    fetchProjects();
+  }, []);
 
-      if (!exists && res.data.length > 0) {
-        setSelectedProject(res.data[0].id);
-      }
-
-    } catch (err) {
-      console.log(err);
+  // 🔥 هنا تحط الكود ده 👇
+  useEffect(() => {
+    if (!selectedProject && projects.length > 0) {
+      setSelectedProject(projects[0].id);
     }
-  };
+  }, [projects]);
 
+  // لما project يتغير → نجيب tasks
+  useEffect(() => {
+    fetchTasks();
+}, [selectedProject]);
   // ===============================
-  // CREATE PROJECT
+  // 🧠 PROJECT ACTIONS
   // ===============================
+
   const createProject = async () => {
     const name = prompt("Project name");
 
-    if (!name || name.trim() === "") return;
+    if (!name?.trim()) return;
 
     try {
-      await api.post("/projects", { name });
-
-      const res = await api.get("/projects");
-      setProjects(res.data);
-
-      // select new project
-      setSelectedProject(res.data[res.data.length - 1].id);
+      await createProjectAPI({ name });
 
       toast.success("Project created 🚀");
+
+      await fetchProjects();
 
     } catch {
       toast.error("Create project failed ❌");
     }
-      toast.error ("Project name already exists ❌ ");
-
-  
   };
 
-  // ===============================
-  // DELETE PROJECT 🔥
-  // ===============================
   const deleteProject = async () => {
     if (!selectedProject) return;
 
-    const confirmDelete = window.confirm("Delete this project?");
-
-    if (!confirmDelete) return;
+    if (!window.confirm("Delete this project?")) return;
 
     try {
-      await api.delete(`/projects/${selectedProject}`);
+      await deleteProjectAPI(selectedProject);
 
       toast.success("Project deleted 🗑️");
 
-      await fetchProjects(); // reload projects
+      await fetchProjects();
 
     } catch {
       toast.error("Delete failed ❌");
@@ -110,161 +135,182 @@ function Dashboard() {
   };
 
   // ===============================
-  // EFFECTS
+  // 🧠 TASK ACTIONS
   // ===============================
-  useEffect(() => {
-    fetchProjects();
-  }, []);
+  const createTask = async (title, subtasks = []) => {
+  console.log("DASHBOARD createTask 🔥", title, subtasks);
 
-  useEffect(() => {
-    if (selectedProject) fetchTasks();
-  }, [selectedProject]);
+  if (!selectedProject) {
+    toast.error("Select project first");
+    return;
+  }
 
-  // ===============================
-  // TASK ACTIONS
-  // ===============================
-  const createTask = async (title) => {
-    if (!selectedProject) {
-      toast.error("Select project first");
-      return;
-    }
-
-    try {
-      await api.post("/tasks", {
-        title,
+  try {
+    // 1️⃣ create main task
+    console.log("Creating main task...");
+    const created = await createTaskAPI({
+      title,
+      description: "",
+      project_id: selectedProject,
+    });
+    console.log("Main task created:", created);
+    // 2️⃣ لو في subtasks → اعملهم
+    for (const sub of subtasks) {
+      await createTaskAPI({
+        title: sub,
         description: "",
         project_id: selectedProject,
+        parent_id: created.id,
       });
-
-      toast.success("Task created ✅");
-      fetchTasks();
-
-    } catch {
-      toast.error("Create failed ❌");
     }
-  };
+
+    toast.success("Task created ✅");
+
+    // 🔥 مهم جدًا
+    setTasks(prev => [...prev, subtasks]);
+
+    // 🔥 رجع قيمة
+    return created;
+
+  } catch (err) {
+    console.error(err);
+    toast.error("Create failed ❌");
+    throw err;
+  }
+};
+
 
   const updateTask = async (id, title) => {
-
     try {
-      await api.put(`/tasks/${id}`, { title });
+      await updateTaskAPI(id, { title });
 
-      // 🔥 تحديث مباشر
+      // تحديث local state بدون reload
       setTasks(prev =>
-        prev.map(task =>
-          task.id === id
-            ? { ...task, title }
-            : task
-        )
+        prev.map(t => t.id === id ? { ...t, title } : t)
       );
 
       setEditingId(null);
       setEditingTitle("");
 
-  } catch (err) {
-    console.log(err);
-        }
-      };
+    } catch {
+      toast.error("Update failed ❌");
+    }
+  };
 
   const deleteTask = async (id) => {
-    await api.delete(`/tasks/${id}`);
+    await deleteTaskAPI(id);
     fetchTasks();
   };
 
   const toggleTask = async (task) => {
-    await api.put(`/tasks/${task.id}`, {
+    await updateTaskAPI(task.id, {
       completed: !task.completed
     });
-    fetchTasks();
+    await fetchTasks();
   };
 
   // ===============================
-  // FILTER
+  // 🔍 FILTER + SEARCH
   // ===============================
+
   const filteredTasks = tasks.filter((t) => {
+
+    // filter
     if (filter === "active" && t.completed) return false;
     if (filter === "done" && !t.completed) return false;
+
+    // search
     return t.title.toLowerCase().includes(search.toLowerCase());
   });
 
   // ===============================
-  // LOADING
+  // 🧱 UI
   // ===============================
-  if (loading && selectedProject) {
-    return <p>Loading...</p>;
-  }
 
-  // ===============================
-  // UI
-  // ===============================
   return (
-    <div className="app-layout">
+    <div className="flex h-screen bg-gray-100">
 
+      {/* ===============================
+          🟦 SIDEBAR
+      =============================== */}
       <Sidebar
         tasks={tasks}
         setFilter={setFilter}
         currentFilter={filter}
       />
 
-      <div className="container">
+      {/* ===============================
+          🟩 MAIN CONTENT
+      =============================== */}
+      <div className="flex-1 p-6 overflow-auto">
 
-        <button onClick={() => {
-          localStorage.removeItem("token");
-          window.location.href = "/";
-        }}>
-          Logout
-        </button>
+        {/* 🔝 HEADER */}
+        <div className="flex justify-between items-center mb-6">
 
-        <h2>TaskForge ⚒️</h2>
+          <h1 className="text-2xl font-bold">TaskForge ⚒️</h1>
 
-        {/* PROJECT BAR */}
-        <div style={{ display: "flex", gap: "10px" }}>
+          <button
+            onClick={() => {
+              localStorage.removeItem("token");
+              window.location.href = "/";
+            }}
+            className="text-sm text-red-500"
+          >
+            Logout
+          </button>
 
-          {projects.length === 0 ? (
-            <p>No projects yet 🚀</p>
-          ) : (
-            <select
-              value={selectedProject || ""}
-              onChange={(e) => setSelectedProject(Number(e.target.value))}
-            >
-              <option value="" disabled>Select project</option>
+        </div>
 
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  📁 {p.name}
-                </option>
-              ))}
-            </select>
-          )}
+        {/* 📁 PROJECT BAR */}
+        <div className="flex gap-2 mb-4">
 
-          <button onClick={createProject}>+ New</button>
+          <select
+            className="border p-2 rounded-lg"
+            value={selectedProject || ""}
+            onChange={(e) => setSelectedProject(Number(e.target.value))}
+          >
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                📁 {p.name}
+              </option>
+            ))}
+          </select>
 
-          {/* 🔥 DELETE PROJECT */}
+          <button
+            onClick={createProject}
+            className="px-3 py-2 bg-blue-500 text-white rounded-lg"
+          >
+            + New
+          </button>
+
           {selectedProject && (
-            <button onClick={deleteProject}>
+            <button
+              onClick={deleteProject}
+              className="px-3 py-2 bg-red-500 text-white rounded-lg"
+            >
               🗑️
             </button>
           )}
 
         </div>
 
-        {/* SEARCH */}
+        {/* 🔍 SEARCH */}
         <input
-          ref={searchRef}
-          placeholder="Search (Ctrl + K)"
+          className="border p-2 rounded-lg w-full mb-4"
+          placeholder="Search..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
 
-        {/* CREATE TASK */}
+        {/* ➕ CREATE TASK */}
         <TaskInput createTask={createTask} />
 
-        {/* EMPTY STATE */}
-        {filteredTasks.length === 0 && selectedProject && (
-          <p>No tasks yet 🚀</p>
+        {/* 📭 EMPTY */}
+        {filteredTasks.length === 0 && (
+          <p className="mt-4 text-gray-500">No tasks yet 🚀</p>
         )}
 
-        {/* TASK LIST */}
+        {/* 📋 TASK LIST */}
         <TaskList
           tasks={filteredTasks}
           deleteTask={deleteTask}

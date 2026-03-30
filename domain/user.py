@@ -30,6 +30,6 @@ class User:
     def __repr__(self) -> str:
         return (
             f"User(id={self.id},  "
-            f"email={self.email!r}, role={self.role.value}, "
+            f"email={self.email!r}, role={self.role}, "
             f"is_active={self.is_active}, is_verified={self.is_verified})"
         )

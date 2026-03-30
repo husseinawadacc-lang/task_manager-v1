@@ -46,6 +46,7 @@ class TaskService:
         self.project_service = project_service
         self.ai = AIService()
         self.audit =audit_service
+        
     # =====================================================
     # CREATE TASK
     # =====================================================
@@ -56,14 +57,16 @@ class TaskService:
         description: str,
         owner_id: int,
         project_id: int,
+        parent_id: int | None = None,
     ) -> Task:
 
         with self.uow as session:
 
             # 🔥 RBAC: only admin / member
-            project= self.project_service.storage.get_project(
+            project= self.project_service.get_project(
                 session=session,
                 project_id=project_id,
+                requester_id=owner_id,
                             )
             self.project_service.require_role(
                 session=session,
@@ -82,11 +85,14 @@ class TaskService:
                 project_id=project_id,
                 completed=False,
                 priority=priority,
+                parent_id=parent_id,
             )
             created = self.storage.create_task(
-                session=session,
-                task=task,
-            )
+                    session=session,
+                    task=task,
+                )
+            
+            
 
             # 🔥 AUDIT
             self.audit.log(
@@ -307,3 +313,91 @@ class TaskService:
             )
 
             return items, total
+        
+    def generate_subtasks_for_task(
+        self,
+        *,
+        task_id: int,
+        title: str,
+        owner_id: int,
+        project_id: int,
+    ):
+        subtasks = self.ai.generate_subtasks(title)
+
+        with self.uow as session:
+
+            # make sure task is found
+
+            parent= self.storage.get_task(
+                session=session,
+                task_id=task_id,
+            )
+            subtasks= self.ai.generate_subtasks(title)
+
+            for sub in subtasks:
+                task = Task(
+                    id=None,
+                    title=sub,
+                    description=None,
+                    owner_id=owner_id,
+                    project_id=project_id,
+                    parent_id=task_id,  # 🔥 الربط
+                    completed=False,
+                    priority="low",
+                )
+
+                self.storage.create_task(session=session, task=task) 
+
+        
+
+    def _build_task_tree(self, session, task: Task, visited=None) -> Task:
+
+        if visited is None:
+            visited = set()
+
+        if task.id in visited:
+            return task
+
+        visited.add(task.id)
+
+        children = self.storage.get_tasks_by_parent(
+            session=session,
+            parent_id=task.id,
+        )
+
+        task.subtasks = [
+            self._build_task_tree(session, child, visited)
+            for child in children
+        ]
+
+        return task
+
+    def get_task_with_subtasks(
+        self,
+        *,
+        task_id: int,
+        requester_id: int,
+    ) -> Task:
+
+        with self.uow as session:
+
+            task = self.storage.get_task(
+                session=session,
+                task_id=task_id,
+            )
+
+            # 🔥 RBAC (مهم جدًا)
+            project = self.project_service.get_project(
+                session=session,
+                project_id=task.project_id,
+                requester_id=requester_id,
+            )
+
+            self.project_service.require_role(
+                session=session,
+                project=project,
+                user_id=requester_id,
+                allowed_roles=["admin", "member", "viewer"],
+            )
+
+            return self._build_task_tree(session, task)
